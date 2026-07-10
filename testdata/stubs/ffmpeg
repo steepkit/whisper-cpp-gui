@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Fake ffmpeg for tests. Records its arguments and writes a small valid
+# 16kHz mono 16-bit WAV file to the output path (the last argument, per
+# ffmpeg convention). invocation.json is written next to the output file.
+# STUB_FAIL=1 exits non-zero after recording the invocation.
+set -u
+
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
+write_invocation() {
+  local out=$1
+  shift
+  {
+    printf '{"stub":"ffmpeg","argv":['
+    local first=1 a
+    for a in "$@"; do
+      if [ $first -eq 1 ]; then first=0; else printf ','; fi
+      printf '"%s"' "$(json_escape "$a")"
+    done
+    printf '],"env":{"STUB_FAIL":"%s"}}\n' "$(json_escape "${STUB_FAIL:-}")"
+  } >"$out"
+}
+
+if [ "$#" -eq 0 ]; then
+  echo "ffmpeg stub: no arguments" >&2
+  exit 1
+fi
+
+out_file=${!#}
+out_dir=$(dirname "$out_file")
+mkdir -p "$out_dir" || exit 1
+write_invocation "$out_dir/invocation.json" "$@" || {
+  echo "ffmpeg stub: cannot write invocation.json" >&2
+  exit 1
+}
+
+if [ "${STUB_FAIL:-0}" = "1" ]; then
+  echo "ffmpeg stub: forced failure (STUB_FAIL=1)" >&2
+  exit 1
+fi
+
+# Minimal valid WAV: RIFF header for 16kHz mono s16le with 3200 data bytes.
+{
+  printf 'RIFF'
+  printf '\244\014\000\000' # chunk size 3236 = 36 + 3200
+  printf 'WAVE'
+  printf 'fmt '
+  printf '\020\000\000\000' # fmt chunk size 16
+  printf '\001\000'         # PCM
+  printf '\001\000'         # 1 channel
+  printf '\200\076\000\000' # sample rate 16000
+  printf '\000\175\000\000' # byte rate 32000
+  printf '\002\000'         # block align
+  printf '\020\000'         # 16 bits per sample
+  printf 'data'
+  printf '\200\014\000\000' # data size 3200
+  dd if=/dev/zero bs=3200 count=1 2>/dev/null
+} >"$out_file" || {
+  echo "ffmpeg stub: cannot write $out_file" >&2
+  exit 1
+}
+
+echo "size=    3kB time=00:00:00.10 bitrate= 256.0kbits/s speed=100x" >&2
+exit 0

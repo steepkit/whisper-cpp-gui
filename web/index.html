@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="screen.document.title"></title>
+  <script src="/bootstrap.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell" id="app">
+    <header class="app-header">
+      <h1 data-i18n="screen.header.title"></h1>
+      <p class="connection-state" id="connection-state" aria-live="polite" data-i18n="screen.connection.loading"></p>
+    </header>
+
+    <section class="setup-panel" id="setup-panel" hidden aria-labelledby="setup-title">
+      <h2 id="setup-title" data-i18n="screen.setup.title"></h2>
+      <p class="muted" data-i18n="screen.setup.description"></p>
+      <ul class="setup-list" id="setup-list"></ul>
+      <p class="copy-status" id="copy-status" aria-live="polite"></p>
+    </section>
+
+    <section class="workspace" aria-labelledby="upload-title">
+      <form id="job-form" novalidate>
+        <fieldset id="job-controls" disabled>
+          <legend id="upload-title" data-i18n="screen.upload.title"></legend>
+
+          <input class="visually-hidden" id="file-input" type="file" accept="audio/*,video/*" data-i18n-aria="screen.upload.picker.label">
+          <button class="drop-zone" id="drop-zone" type="button" data-i18n="screen.upload.drop.idle" data-i18n-aria="screen.upload.drop.label" aria-describedby="selected-file"></button>
+          <p class="selected-file" id="selected-file" aria-live="polite" data-i18n="screen.upload.filename.empty"></p>
+          <button class="secondary-action" id="file-picker" type="button" data-i18n="screen.upload.picker.action"></button>
+
+          <fieldset class="control-group" id="preset-group">
+            <legend data-i18n="screen.preset.legend"></legend>
+            <div class="preset-options" id="preset-options" role="radiogroup" data-i18n-aria="screen.preset.legend"></div>
+          </fieldset>
+
+          <fieldset class="control-group">
+            <legend data-i18n="screen.options.legend"></legend>
+            <label class="check-control" for="vad-option">
+              <input id="vad-option" type="checkbox">
+              <span data-i18n="screen.options.vad.label"></span>
+            </label>
+            <div class="output-options" id="output-options">
+              <label class="check-control" for="output-txt">
+                <input id="output-txt" type="checkbox" value="txt">
+                <span data-i18n="screen.options.output.txt"></span>
+              </label>
+              <label class="check-control" for="output-srt">
+                <input id="output-srt" type="checkbox" value="srt">
+                <span data-i18n="screen.options.output.srt"></span>
+              </label>
+              <label class="check-control" for="output-vtt">
+                <input id="output-vtt" type="checkbox" value="vtt">
+                <span data-i18n="screen.options.output.vtt"></span>
+              </label>
+            </div>
+          </fieldset>
+
+          <section class="required-model-notice" id="required-model-notice" hidden aria-labelledby="required-model-title" aria-live="polite">
+            <h3 id="required-model-title"></h3>
+            <p id="required-model-message"></p>
+            <button class="secondary-action" id="required-model-action" type="button"></button>
+          </section>
+
+          <div class="form-actions">
+            <button class="primary-action" id="start-button" type="submit" data-i18n="screen.action.start.idle"></button>
+            <button class="danger-action" id="cancel-button" type="button" data-i18n="screen.action.cancel.idle" hidden></button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="model-panel" id="model-panel" aria-labelledby="model-title">
+      <div class="section-heading">
+        <h2 id="model-title" data-i18n="screen.models.title"></h2>
+        <div class="model-heading-actions">
+          <p class="model-summary" id="model-summary" aria-live="polite" data-i18n="screen.models.summary.loading"></p>
+          <button class="model-refresh" id="model-refresh" type="button" data-i18n="screen.models.action.refresh"></button>
+        </div>
+      </div>
+
+      <section class="model-error-panel" id="model-error-panel" hidden role="alert" aria-live="assertive" aria-labelledby="model-error-title">
+        <h3 id="model-error-title" data-i18n="screen.models.error.title"></h3>
+        <p id="model-error-message"></p>
+      </section>
+
+      <ul class="model-list" id="model-list" aria-busy="true"></ul>
+    </section>
+
+    <section class="job-panel" id="job-panel" aria-labelledby="job-title">
+      <div class="section-heading">
+        <h2 id="job-title" data-i18n="screen.job.title"></h2>
+        <p class="job-status" id="job-status" aria-live="polite" data-i18n="screen.job.status.idle"></p>
+      </div>
+      <progress id="job-progress" max="100" aria-valuemin="0" aria-valuemax="100" data-i18n-aria="screen.job.progress.label"></progress>
+      <p class="progress-label" id="progress-label" data-i18n="screen.job.progress.unknown"></p>
+
+      <section class="error-panel" id="error-panel" hidden role="alert" aria-live="assertive" aria-labelledby="error-title">
+        <h3 id="error-title" data-i18n="screen.error.title"></h3>
+        <p id="error-message"></p>
+        <p class="recovery-path" id="recovery-path" hidden></p>
+        <pre id="stderr-tail" hidden></pre>
+      </section>
+
+      <details class="log-panel" id="log-panel">
+        <summary data-i18n="screen.log.summary"></summary>
+        <ol id="log-list"></ol>
+      </details>
+
+      <section class="download-panel" id="download-panel" hidden aria-labelledby="download-title">
+        <h3 id="download-title" data-i18n="screen.download.title"></h3>
+        <ul class="download-list" id="download-list"></ul>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

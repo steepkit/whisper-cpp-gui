@@ -1,0 +1,16 @@
+[
+  {
+    "id": "ja_fast",
+    "name": "preset.ja_fast.name",
+    "model": "large-v3-turbo-q5_0",
+    "vad": true,
+    "outputs": ["txt", "srt", "vtt"]
+  },
+  {
+    "id": "ja_accurate",
+    "name": "preset.ja_accurate.name",
+    "model": "large-v3-q5_0",
+    "vad": true,
+    "outputs": ["txt", "srt", "vtt"]
+  }
+]

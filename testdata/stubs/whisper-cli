@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# Fake whisper-cli for tests. No real transcription happens here.
+#
+# Behavior contract (docs/implementation_plan.md M0-2):
+#   - Records every argument as JSON to {output dir}/invocation.json,
+#     where {output dir} is the directory of the -of prefix (cwd if absent).
+#   - --help prints a help text that includes --vad / --vad-model, unless
+#     STUB_NO_VAD=1, in which case the VAD flags are omitted.
+#   - With -pp / --print-progress, emits progress-looking lines
+#     ("progress = 25%") to stderr, one per interval. Interval defaults to
+#     1s and can be overridden with STUB_PROGRESS_INTERVAL.
+#   - Generates fixed txt/srt/vtt content following the -of prefix. If any
+#     of -otxt/-osrt/-ovtt are passed only those are generated, otherwise
+#     all three.
+#   - STUB_NO_VAD=1 makes --vad / --vad-model exit non-zero (unsupported).
+#   - STUB_FAIL=1 exits non-zero after recording the invocation.
+#   - STUB_IGNORE_TERM=1 makes this script and its sleep child ignore SIGTERM.
+set -u
+
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
+write_invocation() {
+  local out=$1
+  shift
+  {
+    printf '{"stub":"whisper-cli","argv":['
+    local first=1 a
+    for a in "$@"; do
+      if [ $first -eq 1 ]; then first=0; else printf ','; fi
+      printf '"%s"' "$(json_escape "$a")"
+    done
+    printf '],"env":{"STUB_FAIL":"%s","STUB_NO_VAD":"%s","STUB_PROGRESS_INTERVAL":"%s","STUB_IGNORE_TERM":"%s"}}\n' \
+      "$(json_escape "${STUB_FAIL:-}")" \
+      "$(json_escape "${STUB_NO_VAD:-}")" \
+      "$(json_escape "${STUB_PROGRESS_INTERVAL:-}")" \
+      "$(json_escape "${STUB_IGNORE_TERM:-}")"
+  } >"$out"
+}
+
+# Convert STUB_PROGRESS_INTERVAL ("10ms" / "0.5s" / "2") to a sleep argument.
+interval_to_sleep() {
+  local v=${1:-1}
+  case "$v" in
+  *ms)
+    v=${v%ms}
+    awk -v ms="$v" 'BEGIN { printf "%g", ms / 1000 }'
+    ;;
+  *s)
+    printf '%s' "${v%s}"
+    ;;
+  *)
+    printf '%s' "$v"
+    ;;
+  esac
+}
+
+print_help() {
+  cat <<EOF
+usage: whisper-cli [options] file0 file1 ...
+
+options:
+  -h,        --help              [default] show this help message and exit
+  -m FNAME,  --model FNAME       [models/ggml-base.en.bin] model path
+  -f FNAME,  --file FNAME        [] input audio file path
+  -of FNAME, --output-file FNAME [] output file path (without file extension)
+  -otxt,     --output-txt        [false] output result in a text file
+  -osrt,     --output-srt        [false] output result in a srt file
+  -ovtt,     --output-vtt        [false] output result in a vtt file
+  -pp,       --print-progress     [false] print progress
+  -l LANG,   --language LANG     [en] spoken language ('auto' for auto-detect)
+EOF
+  if [ "${STUB_NO_VAD:-0}" != "1" ]; then
+    cat <<EOF
+  --vad                          [false] enable Voice Activity Detection (VAD)
+  --vad-model FNAME              [] VAD model path
+EOF
+  fi
+}
+
+# --help short-circuits: no invocation.json, no outputs.
+for a in "$@"; do
+  case "$a" in
+  -h | --help)
+    print_help
+    exit 0
+    ;;
+  esac
+done
+
+# Ignore SIGTERM only for normal runs. An ignored disposition is inherited by
+# external commands, so the sleep child exercises process-group SIGKILL too.
+if [ "${STUB_IGNORE_TERM:-0}" = "1" ]; then
+  trap '' TERM
+fi
+
+of_prefix=""
+want_txt=0 want_srt=0 want_vtt=0 want_progress=0
+uses_vad=0
+prev=""
+for a in "$@"; do
+  case "$prev" in
+  -of | --output-file) of_prefix=$a ;;
+  esac
+  case "$a" in
+  -otxt | --output-txt) want_txt=1 ;;
+  -osrt | --output-srt) want_srt=1 ;;
+  -ovtt | --output-vtt) want_vtt=1 ;;
+  -pp | --print-progress) want_progress=1 ;;
+  --vad | --vad-model) uses_vad=1 ;;
+  esac
+  prev=$a
+done
+
+out_dir=.
+if [ -n "$of_prefix" ]; then
+  out_dir=$(dirname "$of_prefix")
+fi
+mkdir -p "$out_dir" || exit 1
+write_invocation "$out_dir/invocation.json" "$@" || {
+  echo "whisper-cli stub: cannot write invocation.json" >&2
+  exit 1
+}
+
+if [ "${STUB_NO_VAD:-0}" = "1" ] && [ "$uses_vad" = "1" ]; then
+  echo "error: unknown argument: --vad" >&2
+  exit 1
+fi
+
+if [ "${STUB_FAIL:-0}" = "1" ]; then
+  echo "whisper-cli stub: forced failure (STUB_FAIL=1)" >&2
+  exit 1
+fi
+
+if [ "$want_progress" -eq 1 ]; then
+  sleep_arg=$(interval_to_sleep "${STUB_PROGRESS_INTERVAL:-1}")
+  for pct in 25 50 75 100; do
+    sleep "$sleep_arg" &
+    sleep_pid=$!
+    if [ -n "${STUB_CHILD_PID_FILE:-}" ]; then
+      printf '%s\n' "$sleep_pid" >"$STUB_CHILD_PID_FILE"
+    fi
+    wait "$sleep_pid"
+    echo "whisper_print_progress_callback: progress = ${pct}%" >&2
+  done
+fi
+
+if [ -n "$of_prefix" ]; then
+  if [ $want_txt -eq 0 ] && [ $want_srt -eq 0 ] && [ $want_vtt -eq 0 ]; then
+    want_txt=1 want_srt=1 want_vtt=1
+  fi
+  if [ $want_txt -eq 1 ]; then
+    printf 'stub transcript line one\nstub transcript line two\n' >"$of_prefix.txt" || exit 1
+  fi
+  if [ $want_srt -eq 1 ]; then
+    printf '1\n00:00:00,000 --> 00:00:02,000\nstub transcript line one\n\n2\n00:00:02,000 --> 00:00:04,000\nstub transcript line two\n' >"$of_prefix.srt" || exit 1
+  fi
+  if [ $want_vtt -eq 1 ]; then
+    printf 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nstub transcript line one\n\n00:00:02.000 --> 00:00:04.000\nstub transcript line two\n' >"$of_prefix.vtt" || exit 1
+  fi
+fi
+
+exit 0

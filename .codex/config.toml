@@ -1,0 +1,35 @@
+# Codex CLI 設定 — whisper-cpp-gui
+#
+# 方針(docs/agentic_workflow.md §6):
+# - model / effort は task risk に応じて呼び出し側が明示し、実行ログへ残す
+# - 非対話 `codex exec` のみ使用(再現性とログのため)
+# - 権限はプロンプトで語らず、呼び出し時の --sandbox で物理的に固定する
+#   - $CODEX_HOME/reviewer.config.toml = read-only(レビュー・設計)
+#   - $CODEX_HOME/engineer.config.toml = workspace-write + network 無効(実装・rescue・QA)
+# - profile file は補助。安全境界の正は CLI の --sandbox 明示
+# - Go 標準ライブラリのみのため、実装時もネットワークは不要 → 無効化して漏洩面を減らす
+# - AGENTS.md が Codex のプロジェクト指示として自動で読まれる前提
+
+# 非対話実行。危険操作はサンドボックスで遮断する設計のため承認プロンプトは使わない
+approval_policy = "never"
+
+# 既定は最も安全な read-only。書き込みが要るタスクは CLI で --sandbox workspace-write を明示する
+sandbox_mode = "read-only"
+
+# profile は Codex 0.134.0 以降、$CODEX_HOME/<name>.config.toml に top-level key として置く。
+# この project config には [profiles.*] を書かない。
+#
+# 例: $CODEX_HOME/reviewer.config.toml
+# approval_policy = "never"
+# sandbox_mode = "read-only"
+#
+# 例: $CODEX_HOME/engineer.config.toml
+# approval_policy = "never"
+# sandbox_mode = "workspace-write"
+#
+# [sandbox_workspace_write]
+# network_access = false
+
+# 注意:
+# - 選択した model / effort が利用可能かは pre-flight で確認する(implementation_plan.md §16)
+# - CODEX_HOME を repo に向けない。auth.json / logs / sessions も移動してしまうため

@@ -1,0 +1,19 @@
+# Built binary
+/whisper-cpp-gui
+/cmd/whisper-cpp-gui/whisper-cpp-gui
+
+# Go build/test artifacts
+*.test
+*.out
+/dist/
+
+# Partial model downloads
+*.partial
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.~lock.*#
+
+# Local-only agent settings
+.claude/settings.local.json

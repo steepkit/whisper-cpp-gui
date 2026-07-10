@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publication_phase:
+        description: Clean-snapshot publication phase
+        required: false
+        default: manual
+        type: choice
+        options:
+          - manual
+          - private-staging
+          - public-recovery
+          - public-verification
+
+run-name: CI (${{ github.event_name == 'workflow_dispatch' && inputs.publication_phase || github.event_name }})
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    name: Ubuntu checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Verify workflow identity contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          expected_workflow_id="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml" --jq .id)"
+          run_workflow_id="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --jq .workflow_id)"
+          test "$run_workflow_id" = "$expected_workflow_id"
+
+      - name: Verify publication phase visibility
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publication_phase != 'manual' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLICATION_PHASE: ${{ github.event.inputs.publication_phase }}
+        run: |
+          case "$PUBLICATION_PHASE" in
+          private-staging) expected_visibility=private ;;
+          public-recovery | public-verification) expected_visibility=public ;;
+          *) echo "unexpected publication phase: $PUBLICATION_PHASE" >&2; exit 1 ;;
+          esac
+          actual_visibility="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .visibility)"
+          test "$actual_visibility" = "$expected_visibility"
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Check formatting
+        run: |
+          gofmt_out="$(gofmt -l .)"
+          test -z "$gofmt_out"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Check shell scripts
+        run: shellcheck scripts/publish_clean_snapshot.sh scripts/smoke_start.sh testdata/stubs/ffmpeg testdata/stubs/smoke-exit testdata/stubs/smoke-hang testdata/stubs/whisper-cli
+
+      - name: Check clean snapshot preparation
+        env:
+          SNAPSHOT_PREPARE_ONLY: "1"
+        run: |
+          snapshot_args=(
+            "$GITHUB_WORKSPACE"
+            steepkit/whisper-cpp-gui
+            whisper-cpp-gui-private-archive
+            "$GITHUB_SHA"
+            "$RUNNER_TEMP/whisper-cpp-gui-public-snapshot"
+            0.1.0
+            "Local browser GUI for whisper.cpp transcription"
+            "Ubuntu checks"
+            "macOS 14 build and startup smoke"
+          )
+          scripts/publish_clean_snapshot.sh "${snapshot_args[@]}"
+          scripts/publish_clean_snapshot.sh "${snapshot_args[@]}"
+          expected_root="$(git -C "${snapshot_args[4]}" rev-parse HEAD)"
+          GIT_COMMITTER_NAME=private-history \
+            GIT_COMMITTER_EMAIL=private@example.invalid \
+            git -C "${snapshot_args[4]}" -c commit.gpgsign=false commit \
+              --amend --no-edit --quiet
+          if scripts/publish_clean_snapshot.sh "${snapshot_args[@]}"
+          then
+            echo "snapshot preparation accepted non-anonymous root metadata" >&2
+            exit 1
+          fi
+          git -C "${snapshot_args[4]}" reset --hard "$expected_root"
+          scripts/publish_clean_snapshot.sh "${snapshot_args[@]}"
+
+      - name: Check startup smoke failures and cleanup
+        env:
+          SMOKE_START_MAX_ATTEMPTS: 3
+          SMOKE_STOP_MAX_ATTEMPTS: 3
+          SMOKE_TEST_PID_FILE: ${{ runner.temp }}/whisper-cpp-gui-smoke-hang.pid
+        run: |
+          if scripts/smoke_start.sh testdata/stubs/smoke-exit; then
+            echo "smoke test accepted an application that exited immediately" >&2
+            exit 1
+          fi
+          if scripts/smoke_start.sh testdata/stubs/smoke-hang; then
+            echo "smoke test accepted an application that never served the UI" >&2
+            exit 1
+          fi
+          smoke_pid="$(cat "$SMOKE_TEST_PID_FILE")"
+          if kill -0 "$smoke_pid" 2>/dev/null; then
+            echo "smoke test left process $smoke_pid running" >&2
+            exit 1
+          fi
+
+  macos:
+    name: macOS 14 build and startup smoke
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Verify publication phase visibility
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publication_phase != 'manual' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLICATION_PHASE: ${{ github.event.inputs.publication_phase }}
+        run: |
+          case "$PUBLICATION_PHASE" in
+          private-staging) expected_visibility=private ;;
+          public-recovery | public-verification) expected_visibility=public ;;
+          *) echo "unexpected publication phase: $PUBLICATION_PHASE" >&2; exit 1 ;;
+          esac
+          actual_visibility="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .visibility)"
+          test "$actual_visibility" = "$expected_visibility"
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build release-like binary
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w -X main.version=0.1.0-ci" \
+            -o dist/whisper-cpp-gui ./cmd/whisper-cpp-gui
+
+      - name: Run startup smoke
+        run: scripts/smoke_start.sh ./dist/whisper-cpp-gui 0.1.0-ci
