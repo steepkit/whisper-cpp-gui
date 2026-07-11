@@ -1078,7 +1078,8 @@ tag at the verified `main` commit, push it once, and create a draft Release:
   test "$(git rev-parse origin/main)" = "$EXPECTED_SOURCE_COMMIT"
 
   test -f "$RELEASE_NOTES"
-  grep -q '^## Physical Mac validation waiver$' "$RELEASE_NOTES"
+  IFS= read -r first_release_notes_line <"$RELEASE_NOTES"
+  test "$first_release_notes_line" = '## Physical Mac validation waiver'
   grep -q "v${VERSION}" "$RELEASE_NOTES"
   if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null
   then
@@ -1105,8 +1106,14 @@ tag at the verified `main` commit, push it once, and create a draft Release:
     exit 1
     ;;
   esac
-  test "$(gh api "repos/${MAIN_REPO}/commits/${TAG}" --jq .sha)" = \
-    "$EXPECTED_SOURCE_COMMIT"
+  remote_tag_object="$(gh api "repos/${MAIN_REPO}/git/ref/tags/${TAG}" \
+    --jq '.object | select(.type == "tag") | .sha')"
+  [[ "$remote_tag_object" =~ ^[0-9a-f]{40}$ ]]
+  remote_tag_commit="$(gh api \
+    "repos/${MAIN_REPO}/git/tags/${remote_tag_object}" \
+    --jq '.object | select(.type == "commit") | .sha')"
+  test "$remote_tag_commit" = "$EXPECTED_SOURCE_COMMIT"
+  test "$(git rev-parse "${TAG}^{commit}")" = "$EXPECTED_SOURCE_COMMIT"
 
   owner="${MAIN_REPO%%/*}"
   name="${MAIN_REPO#*/}"
@@ -1123,15 +1130,15 @@ tag at the verified `main` commit, push it once, and create a draft Release:
       --title "whisper-cpp-gui ${TAG}" --notes-file "$RELEASE_NOTES"
   else
     test "$release_tag" = "$TAG"
-    release_draft="$(gh api graphql \
-      -f owner="$owner" -f name="$name" -f tag="$TAG" \
-      -f query='query($owner: String!, $name: String!, $tag: String!) {
-        repository(owner: $owner, name: $name) {
-          release(tagName: $tag) { isDraft }
-        }
-      }' --jq '.data.repository.release.isDraft')"
-    test "$release_draft" = true
   fi
+  test "$(gh release view "$TAG" --repo "$MAIN_REPO" \
+    --json isDraft --jq .isDraft)" = true
+  test "$(gh release view "$TAG" --repo "$MAIN_REPO" \
+    --json name --jq .name)" = "whisper-cpp-gui ${TAG}"
+  release_body="$(gh release view "$TAG" --repo "$MAIN_REPO" \
+    --json body --jq .body)"
+  reviewed_release_body="$(cat "$RELEASE_NOTES")"
+  test "$release_body" = "$reviewed_release_body"
 )
 ```
 
@@ -1150,10 +1157,23 @@ resolves to the reviewed commit:
   VERSION=0.1.1
   TAG="v${VERSION}"
   MAIN_REPO=steepkit/whisper-cpp-gui
+  EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
   ARCHIVE_URL="https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
   archive="$(mktemp)"
   trap 'rm -f "$archive"' EXIT
 
+  [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  verify_remote_tag() {
+    local tag_commit tag_object
+    tag_object="$(gh api "repos/${MAIN_REPO}/git/ref/tags/${TAG}" \
+      --jq '.object | select(.type == "tag") | .sha')"
+    [[ "$tag_object" =~ ^[0-9a-f]{40}$ ]]
+    tag_commit="$(gh api "repos/${MAIN_REPO}/git/tags/${tag_object}" \
+      --jq '.object | select(.type == "commit") | .sha')"
+    test "$tag_commit" = "$EXPECTED_SOURCE_COMMIT"
+  }
+
+  verify_remote_tag
   env -u GH_TOKEN -u GITHUB_TOKEN \
     curl --disable --fail --location --proto '=https' \
     --proto-redir '=https' --tlsv1.2 --remove-on-error \
@@ -1162,6 +1182,7 @@ resolves to the reviewed commit:
   tar -tzf "$archive" >/dev/null
   archive_sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
   [[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]]
+  verify_remote_tag
   printf 'Archive URL: %s\nArchive SHA256: %s\n' \
     "$ARCHIVE_URL" "$archive_sha256"
 )
@@ -1175,7 +1196,9 @@ waiver references. Before opening the PR, run `ruby -c`, `brew style`, and
 `brew info --json=v2` against the checked-out Formula. The PR must pass tap
 syntax and the clean macOS source-install/`brew test` job. Merge only after the
 Formula PR records its archive URL, SHA256, source commit, source CI, and owner
-approval. Record the PR number and exact head branch for section 10.5; direct
+approval. Record the PR number, exact head branch and commit, and successful
+`pull_request` CI run ID and URL before merging. Also record the successful
+post-merge `push` CI run ID and URL. Section 10.5 verifies both runs; direct
 pushes to tap `main` do not satisfy this gate.
 
 ### 10.5 Publish and verify the patch release
@@ -1193,26 +1216,38 @@ Homebrew update from an installed previous version:
   MAIN_REPO=steepkit/whisper-cpp-gui
   TAP_REPO=steepkit/homebrew-tap
   FORMULA=steepkit/tap/whisper-cpp-gui
+  RELEASE_NOTES=REPLACE_WITH_REVIEWED_NOTES_FILE
   EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
   EXPECTED_TAP_COMMIT=REPLACE_WITH_RECORDED_40_HEX_TAP_COMMIT
   EXPECTED_ARCHIVE_SHA256=REPLACE_WITH_RECORDED_64_HEX_SHA256
   SOURCE_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
+  TAP_PR_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
   TAP_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
   TAP_PR_NUMBER=REPLACE_WITH_RECORDED_NUMERIC_PR_NUMBER
   EXPECTED_TAP_PR_HEAD=release/v0.1.1
+  EXPECTED_TAP_PR_HEAD_COMMIT=REPLACE_WITH_RECORDED_40_HEX_TAP_PR_HEAD_COMMIT
 
   [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   [[ "$EXPECTED_TAP_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$EXPECTED_TAP_PR_HEAD_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   [[ "$EXPECTED_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]]
+  [[ "$TAP_PR_CI_RUN_ID" =~ ^[0-9]+$ ]]
   [[ "$TAP_CI_RUN_ID" =~ ^[0-9]+$ ]]
   [[ "$TAP_PR_NUMBER" =~ ^[0-9]+$ ]]
+  test -f "$RELEASE_NOTES"
+  IFS= read -r first_release_notes_line <"$RELEASE_NOTES"
+  test "$first_release_notes_line" = '## Physical Mac validation waiver'
 
   test "$(gh api "repos/${MAIN_REPO}" --jq .visibility)" = public
   test "$(gh api "repos/${TAP_REPO}" --jq .visibility)" = public
   test "$(gh api "repos/${MAIN_REPO}/commits/main" --jq .sha)" = \
     "$EXPECTED_SOURCE_COMMIT"
-  test "$(gh api "repos/${MAIN_REPO}/commits/${TAG}" --jq .sha)" = \
+  remote_tag_object="$(gh api "repos/${MAIN_REPO}/git/ref/tags/${TAG}" \
+    --jq '.object | select(.type == "tag") | .sha')"
+  [[ "$remote_tag_object" =~ ^[0-9a-f]{40}$ ]]
+  test "$(gh api "repos/${MAIN_REPO}/git/tags/${remote_tag_object}" \
+    --jq '.object | select(.type == "commit") | .sha')" = \
     "$EXPECTED_SOURCE_COMMIT"
   test "$(gh api "repos/${TAP_REPO}/commits/main" --jq .sha)" = \
     "$EXPECTED_TAP_COMMIT"
@@ -1225,6 +1260,8 @@ Homebrew update from an installed previous version:
     --json baseRefName --jq .baseRefName)" = main
   test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
     --json headRefName --jq .headRefName)" = "$EXPECTED_TAP_PR_HEAD"
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json headRefOid --jq .headRefOid)" = "$EXPECTED_TAP_PR_HEAD_COMMIT"
   test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
     --json mergeCommit --jq .mergeCommit.oid)" = "$EXPECTED_TAP_COMMIT"
   tap_pr_body="$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
@@ -1240,15 +1277,35 @@ Homebrew update from an installed previous version:
   test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
     --jq .head_sha)" = "$EXPECTED_SOURCE_COMMIT"
   test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
+    --jq .event)" = push
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
     --jq .conclusion)" = success
   test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}/jobs" \
     --paginate --jq '[.jobs[] | select(.name == "Ubuntu checks" and .conclusion == "success")] | length')" = 1
   test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}/jobs" \
     --paginate --jq '[.jobs[] | select(.name == "macOS 14 build and startup smoke" and .conclusion == "success")] | length')" = 1
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
+    --jq .workflow_id)" = "$tap_workflow_id"
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
+    --jq .event)" = pull_request
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
+    --jq '.pull_requests | length')" = 1
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
+    --jq '.pull_requests[0].number')" = "$TAP_PR_NUMBER"
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
+    --jq '.pull_requests[0].head.sha')" = "$EXPECTED_TAP_PR_HEAD_COMMIT"
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
+    --jq .conclusion)" = success
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "Tap syntax" and .conclusion == "success")] | length')" = 1
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "macOS source install" and .conclusion == "success")] | length')" = 1
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
     --jq .workflow_id)" = "$tap_workflow_id"
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
     --jq .head_sha)" = "$EXPECTED_TAP_COMMIT"
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
+    --jq .event)" = push
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
     --jq .conclusion)" = success
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}/jobs" \
@@ -1279,10 +1336,8 @@ Homebrew update from an installed previous version:
     --json isDraft --jq .isDraft)"
   release_body="$(gh release view "$TAG" --repo "$MAIN_REPO" \
     --json body --jq .body)"
-  grep -Fq '## Physical Mac validation waiver' <<<"$release_body"
-  grep -Fq "No physical Apple Silicon Mac was available for ${TAG}." \
-    <<<"$release_body"
-  grep -Fq 'ADR 0016' <<<"$release_body"
+  reviewed_release_body="$(cat "$RELEASE_NOTES")"
+  test "$release_body" = "$reviewed_release_body"
   case "$draft_state" in
   true) gh release edit "$TAG" --repo "$MAIN_REPO" --draft=false --latest ;;
   false) gh release edit "$TAG" --repo "$MAIN_REPO" --latest ;;
@@ -1293,10 +1348,14 @@ Homebrew update from an installed previous version:
 
   brew update
   brew list --versions "$FORMULA" >/dev/null
-  test "$(whisper-cpp-gui --version)" = \
+  formula_binary="$(brew --prefix "$FORMULA")/bin/whisper-cpp-gui"
+  test -x "$formula_binary"
+  test "$("$formula_binary" --version)" = \
     "whisper-cpp-gui 0.1.0"
   brew upgrade "$FORMULA"
-  test "$(whisper-cpp-gui --version)" = \
+  formula_binary="$(brew --prefix "$FORMULA")/bin/whisper-cpp-gui"
+  test -x "$formula_binary"
+  test "$("$formula_binary" --version)" = \
     "whisper-cpp-gui ${VERSION}"
 )
 ```
