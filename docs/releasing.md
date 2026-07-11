@@ -1066,9 +1066,11 @@ tag at the verified `main` commit, push it once, and create a draft Release:
   VERSION=0.1.1
   TAG="v${VERSION}"
   MAIN_REPO=steepkit/whisper-cpp-gui
-  RELEASE_NOTES=REPLACE_WITH_REVIEWED_NOTES_FILE
+  RELEASE_NOTES=docs/releases/v0.1.1.md
+  EXPECTED_RELEASE_NOTES_SHA256=c8d05bb2749c1e708588480c788ba250a8b53aa3f52730a763a8c21663507ed3
   EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
 
+  [[ "$EXPECTED_RELEASE_NOTES_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   git fetch --prune --tags origin
   git switch main
@@ -1078,6 +1080,8 @@ tag at the verified `main` commit, push it once, and create a draft Release:
   test "$(git rev-parse origin/main)" = "$EXPECTED_SOURCE_COMMIT"
 
   test -f "$RELEASE_NOTES"
+  test "$(shasum -a 256 "$RELEASE_NOTES" | awk '{print $1}')" = \
+    "$EXPECTED_RELEASE_NOTES_SHA256"
   IFS= read -r first_release_notes_line <"$RELEASE_NOTES"
   test "$first_release_notes_line" = '## Physical Mac validation waiver'
   grep -q "v${VERSION}" "$RELEASE_NOTES"
@@ -1217,7 +1221,8 @@ Homebrew update from an installed previous version:
   TAP_REPO=steepkit/homebrew-tap
   FORMULA=steepkit/tap/whisper-cpp-gui
   ARCHIVE_URL="https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
-  RELEASE_NOTES=REPLACE_WITH_REVIEWED_NOTES_FILE
+  RELEASE_NOTES=docs/releases/v0.1.1.md
+  EXPECTED_RELEASE_NOTES_SHA256=c8d05bb2749c1e708588480c788ba250a8b53aa3f52730a763a8c21663507ed3
   EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
   EXPECTED_TAP_COMMIT=REPLACE_WITH_RECORDED_40_HEX_TAP_COMMIT
   EXPECTED_ARCHIVE_SHA256=REPLACE_WITH_RECORDED_64_HEX_SHA256
@@ -1228,6 +1233,7 @@ Homebrew update from an installed previous version:
   EXPECTED_TAP_PR_HEAD=release/v0.1.1
   EXPECTED_TAP_PR_HEAD_COMMIT=REPLACE_WITH_RECORDED_40_HEX_TAP_PR_HEAD_COMMIT
 
+  [[ "$EXPECTED_RELEASE_NOTES_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   [[ "$EXPECTED_TAP_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   [[ "$EXPECTED_TAP_PR_HEAD_COMMIT" =~ ^[0-9a-f]{40}$ ]]
@@ -1237,6 +1243,8 @@ Homebrew update from an installed previous version:
   [[ "$TAP_CI_RUN_ID" =~ ^[0-9]+$ ]]
   [[ "$TAP_PR_NUMBER" =~ ^[0-9]+$ ]]
   test -f "$RELEASE_NOTES"
+  test "$(shasum -a 256 "$RELEASE_NOTES" | awk '{print $1}')" = \
+    "$EXPECTED_RELEASE_NOTES_SHA256"
   IFS= read -r first_release_notes_line <"$RELEASE_NOTES"
   test "$first_release_notes_line" = '## Physical Mac validation waiver'
 
@@ -1355,6 +1363,12 @@ Homebrew update from an installed previous version:
   current_archive_sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
   test "$current_archive_sha256" = "$EXPECTED_ARCHIVE_SHA256"
 
+  brew list --versions "$FORMULA" >/dev/null
+  formula_binary="$(brew --prefix "$FORMULA")/bin/whisper-cpp-gui"
+  test -x "$formula_binary"
+  test "$("$formula_binary" --version)" = \
+    "whisper-cpp-gui 0.1.0"
+
   draft_state="$(gh release view "$TAG" --repo "$MAIN_REPO" \
     --json isDraft --jq .isDraft)"
   release_body="$(gh release view "$TAG" --repo "$MAIN_REPO" \
@@ -1369,11 +1383,6 @@ Homebrew update from an installed previous version:
   test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
     "$TAG"
 
-  brew list --versions "$FORMULA" >/dev/null
-  formula_binary="$(brew --prefix "$FORMULA")/bin/whisper-cpp-gui"
-  test -x "$formula_binary"
-  test "$("$formula_binary" --version)" = \
-    "whisper-cpp-gui 0.1.0"
   brew upgrade "$FORMULA"
   formula_binary="$(brew --prefix "$FORMULA")/bin/whisper-cpp-gui"
   test -x "$formula_binary"
