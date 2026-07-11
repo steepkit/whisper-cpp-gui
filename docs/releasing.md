@@ -1216,6 +1216,7 @@ Homebrew update from an installed previous version:
   MAIN_REPO=steepkit/whisper-cpp-gui
   TAP_REPO=steepkit/homebrew-tap
   FORMULA=steepkit/tap/whisper-cpp-gui
+  ARCHIVE_URL="https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
   RELEASE_NOTES=REPLACE_WITH_REVIEWED_NOTES_FILE
   EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
   EXPECTED_TAP_COMMIT=REPLACE_WITH_RECORDED_40_HEX_TAP_COMMIT
@@ -1313,20 +1314,42 @@ Homebrew update from an installed previous version:
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}/jobs" \
     --paginate --jq '[.jobs[] | select(.name == "macOS source install" and .conclusion == "success")] | length')" = 1
 
-  formula="$(env -u GH_TOKEN -u GITHUB_TOKEN \
-    curl --disable --fail --silent --show-error --proto '=https' \
-    --proto-redir '=https' --tlsv1.2 \
-    "https://raw.githubusercontent.com/${TAP_REPO}/main/Formula/whisper-cpp-gui.rb")"
-  grep -Fq "archive/refs/tags/${TAG}.tar.gz" <<<"$formula"
-  grep -Fq "sha256 \"${EXPECTED_ARCHIVE_SHA256}\"" <<<"$formula"
-
+  formula_file="$(mktemp)"
   archive="$(mktemp)"
-  trap 'rm -f "$archive"' EXIT
+  cleanup() {
+    rm -f "$formula_file"
+    rm -f "$archive"
+  }
+  trap cleanup EXIT
+  env -u GH_TOKEN -u GITHUB_TOKEN \
+    curl --disable --fail --silent --show-error --proto '=https' \
+    --proto-redir '=https' --tlsv1.2 --remove-on-error \
+    --output "$formula_file" \
+    "https://raw.githubusercontent.com/${TAP_REPO}/main/Formula/whisper-cpp-gui.rb"
+  brew update
+  tap_checkout="$(brew --repository steepkit/tap)"
+  test "$(git -C "$tap_checkout" rev-parse HEAD)" = "$EXPECTED_TAP_COMMIT"
+  cmp -s "$formula_file" \
+    "${tap_checkout}/Formula/whisper-cpp-gui.rb"
+  formula_json="$(HOMEBREW_NO_AUTO_UPDATE=1 \
+    brew info --json=v2 "$FORMULA")"
+  formula_url="$(ruby -rjson -e \
+    'puts JSON.parse(STDIN.read).fetch("formulae").fetch(0).fetch("urls").fetch("stable").fetch("url")' \
+    <<<"$formula_json")"
+  formula_sha256="$(ruby -rjson -e \
+    'puts JSON.parse(STDIN.read).fetch("formulae").fetch(0).fetch("urls").fetch("stable").fetch("checksum")' \
+    <<<"$formula_json")"
+  formula_version="$(ruby -rjson -e \
+    'puts JSON.parse(STDIN.read).fetch("formulae").fetch(0).fetch("versions").fetch("stable")' \
+    <<<"$formula_json")"
+  test "$formula_url" = "$ARCHIVE_URL"
+  test "$formula_sha256" = "$EXPECTED_ARCHIVE_SHA256"
+  test "$formula_version" = "$VERSION"
+
   env -u GH_TOKEN -u GITHUB_TOKEN \
     curl --disable --fail --location --proto '=https' \
     --proto-redir '=https' --tlsv1.2 --remove-on-error \
-    --output "$archive" \
-    "https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
+    --output "$archive" "$ARCHIVE_URL"
   test -s "$archive"
   tar -tzf "$archive" >/dev/null
   current_archive_sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
@@ -1346,7 +1369,6 @@ Homebrew update from an installed previous version:
   test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
     "$TAG"
 
-  brew update
   brew list --versions "$FORMULA" >/dev/null
   formula_binary="$(brew --prefix "$FORMULA")/bin/whisper-cpp-gui"
   test -x "$formula_binary"
