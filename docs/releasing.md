@@ -1434,7 +1434,10 @@ EOF
   test "$release_body" = "$reviewed_release_body"
   case "$draft_state" in
   true) gh release edit "$TAG" --repo "$MAIN_REPO" --draft=false --latest ;;
-  false) gh release edit "$TAG" --repo "$MAIN_REPO" --latest ;;
+  false)
+    test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
+      "$TAG"
+    ;;
   *) echo "unexpected draft state: ${draft_state}" >&2; exit 1 ;;
   esac
   test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
