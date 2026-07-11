@@ -1238,7 +1238,10 @@ approval. Record the PR number, exact head branch and commit, and successful
 post-merge `push` CI run ID and URL. Section 10.5 verifies both runs; direct
 pushes to tap `main` do not satisfy this gate. Use an Issue titled
 `release: update whisper-cpp-gui to v0.1.1`, and make the PR body exactly match
-the `expected_tap_pr_body` assembled in section 10.5.
+the `expected_tap_pr_body` assembled in section 10.5. GitHub may clear an
+Actions run's `pull_requests` array after merge or head-branch deletion, so the
+post-merge gate binds the run through the PR's retained `statusCheckRollup`,
+head branch, and head commit instead.
 
 ### 10.5 Publish and verify the patch release
 
@@ -1355,13 +1358,18 @@ EOF
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
     --jq .event)" = pull_request
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
-    --jq '.pull_requests | length')" = 1
+    --jq .head_branch)" = "$EXPECTED_TAP_PR_HEAD"
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
-    --jq '.pull_requests[0].number')" = "$TAP_PR_NUMBER"
-  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
-    --jq '.pull_requests[0].head.sha')" = "$EXPECTED_TAP_PR_HEAD_COMMIT"
+    --jq .head_sha)" = "$EXPECTED_TAP_PR_HEAD_COMMIT"
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}" \
     --jq .conclusion)" = success
+  tap_pr_ci_url_prefix="https://github.com/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}/"
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json statusCheckRollup \
+    --jq "[.statusCheckRollup[] | select(.__typename == \"CheckRun\" and .workflowName == \"CI\" and .status == \"COMPLETED\" and .conclusion == \"SUCCESS\" and .name == \"Tap syntax\" and (.detailsUrl | startswith(\"${tap_pr_ci_url_prefix}\")))] | length")" = 1
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json statusCheckRollup \
+    --jq "[.statusCheckRollup[] | select(.__typename == \"CheckRun\" and .workflowName == \"CI\" and .status == \"COMPLETED\" and .conclusion == \"SUCCESS\" and .name == \"macOS source install\" and (.detailsUrl | startswith(\"${tap_pr_ci_url_prefix}\")))] | length")" = 1
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}/jobs" \
     --paginate --jq '[.jobs[] | select(.name == "Tap syntax" and .conclusion == "success")] | length')" = 1
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_PR_CI_RUN_ID}/jobs" \
