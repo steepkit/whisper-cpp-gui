@@ -1004,10 +1004,13 @@ clean public source checkout:
   VERSION=0.1.1
   PREVIOUS_VERSION=0.1.0
   MAIN_REPO=steepkit/whisper-cpp-gui
+  TAP_REPO=steepkit/homebrew-tap
   WAIVER=docs/adr/0016-waive-physical-mac-validation-for-v0.1.1.md
   TAG="v${VERSION}"
 
   gh auth status
+  test "$(gh api "repos/${MAIN_REPO}" --jq .visibility)" = public
+  test "$(gh api "repos/${TAP_REPO}" --jq .visibility)" = public
   git fetch --prune --tags origin
   git switch main
   git pull --ff-only origin main
@@ -1045,12 +1048,33 @@ clean public source checkout:
     testdata/stubs/smoke-hang testdata/stubs/whisper-cli
 
   source_commit="$(git rev-parse HEAD)"
-  source_ci_url="$(gh run list --repo "$MAIN_REPO" --workflow CI \
-    --commit "$source_commit" --status success --limit 1 --json url \
-    --jq '.[0].url // ""')"
+  test "$(gh api "repos/${MAIN_REPO}/commits/main" --jq .sha)" = \
+    "$source_commit"
+  source_ci_run_id="$(gh run list --repo "$MAIN_REPO" --workflow CI \
+    --branch main --commit "$source_commit" --event push --status success \
+    --limit 1 --json databaseId --jq '.[0].databaseId // ""')"
+  [[ "$source_ci_run_id" =~ ^[0-9]+$ ]]
+  source_workflow_id="$(gh api \
+    "repos/${MAIN_REPO}/actions/workflows/ci.yml" --jq .id)"
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}" \
+    --jq .workflow_id)" = "$source_workflow_id"
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}" \
+    --jq .event)" = push
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}" \
+    --jq .head_branch)" = main
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}" \
+    --jq .head_sha)" = "$source_commit"
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}" \
+    --jq .conclusion)" = success
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "Ubuntu checks" and .conclusion == "success")] | length')" = 1
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "macOS 14 build and startup smoke" and .conclusion == "success")] | length')" = 1
+  source_ci_url="$(gh api \
+    "repos/${MAIN_REPO}/actions/runs/${source_ci_run_id}" --jq .html_url)"
   test -n "$source_ci_url"
-  printf 'Source commit: %s\nSource CI: %s\n' \
-    "$source_commit" "$source_ci_url"
+  printf 'Source commit: %s\nSource CI run ID: %s\nSource CI: %s\n' \
+    "$source_commit" "$source_ci_run_id" "$source_ci_url"
 )
 ```
 
@@ -1066,12 +1090,15 @@ tag at the verified `main` commit, push it once, and create a draft Release:
   VERSION=0.1.1
   TAG="v${VERSION}"
   MAIN_REPO=steepkit/whisper-cpp-gui
+  TAP_REPO=steepkit/homebrew-tap
   RELEASE_NOTES=docs/releases/v0.1.1.md
   EXPECTED_RELEASE_NOTES_SHA256=c8d05bb2749c1e708588480c788ba250a8b53aa3f52730a763a8c21663507ed3
   EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
 
   [[ "$EXPECTED_RELEASE_NOTES_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  test "$(gh api "repos/${MAIN_REPO}" --jq .visibility)" = public
+  test "$(gh api "repos/${TAP_REPO}" --jq .visibility)" = public
   origin_url="$(git remote get-url origin)"
   case "$origin_url" in
     https://github.com/steepkit/whisper-cpp-gui.git | \
@@ -1209,7 +1236,9 @@ Formula PR records its archive URL, SHA256, source commit, source CI, and owner
 approval. Record the PR number, exact head branch and commit, and successful
 `pull_request` CI run ID and URL before merging. Also record the successful
 post-merge `push` CI run ID and URL. Section 10.5 verifies both runs; direct
-pushes to tap `main` do not satisfy this gate.
+pushes to tap `main` do not satisfy this gate. Use an Issue titled
+`release: update whisper-cpp-gui to v0.1.1`, and make the PR body exactly match
+the `expected_tap_pr_body` assembled in section 10.5.
 
 ### 10.5 Publish and verify the patch release
 
@@ -1235,6 +1264,7 @@ Homebrew update from an installed previous version:
   SOURCE_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
   TAP_PR_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
   TAP_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
+  TAP_ISSUE_NUMBER=REPLACE_WITH_RECORDED_NUMERIC_ISSUE_NUMBER
   TAP_PR_NUMBER=REPLACE_WITH_RECORDED_NUMERIC_PR_NUMBER
   EXPECTED_TAP_PR_HEAD=release/v0.1.1
   EXPECTED_TAP_PR_HEAD_COMMIT=REPLACE_WITH_RECORDED_40_HEX_TAP_PR_HEAD_COMMIT
@@ -1247,6 +1277,7 @@ Homebrew update from an installed previous version:
   [[ "$SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]]
   [[ "$TAP_PR_CI_RUN_ID" =~ ^[0-9]+$ ]]
   [[ "$TAP_CI_RUN_ID" =~ ^[0-9]+$ ]]
+  [[ "$TAP_ISSUE_NUMBER" =~ ^[0-9]+$ ]]
   [[ "$TAP_PR_NUMBER" =~ ^[0-9]+$ ]]
   test -f "$RELEASE_NOTES"
   test "$(shasum -a 256 "$RELEASE_NOTES" | awk '{print $1}')" = \
@@ -1267,6 +1298,11 @@ Homebrew update from an installed previous version:
   test "$(gh api "repos/${TAP_REPO}/commits/main" --jq .sha)" = \
     "$EXPECTED_TAP_COMMIT"
 
+  test "$(gh issue view "$TAP_ISSUE_NUMBER" --repo "$TAP_REPO" \
+    --json state --jq .state)" = CLOSED
+  test "$(gh issue view "$TAP_ISSUE_NUMBER" --repo "$TAP_REPO" \
+    --json title --jq .title)" = \
+    "release: update whisper-cpp-gui to ${TAG}"
   test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
     --json state --jq .state)" = MERGED
   test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
@@ -1281,7 +1317,22 @@ Homebrew update from an installed previous version:
     --json mergeCommit --jq .mergeCommit.oid)" = "$EXPECTED_TAP_COMMIT"
   tap_pr_body="$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
     --json body --jq .body)"
-  grep -Fq 'The repository owner explicitly approved' <<<"$tap_pr_body"
+  expected_tap_pr_body="$(cat <<EOF
+## Release evidence
+
+Upstream tag: ${TAG}
+Source commit: ${EXPECTED_SOURCE_COMMIT}
+Archive URL: ${ARCHIVE_URL}
+Archive SHA256: ${EXPECTED_ARCHIVE_SHA256}
+Source CI: https://github.com/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}
+Physical Mac validation waiver: ADR 0016
+
+The repository owner explicitly approved the ${TAG} release, physical Mac validation waiver, and Homebrew Formula update on 2026-07-12.
+
+Closes #${TAP_ISSUE_NUMBER}
+EOF
+)"
+  test "$tap_pr_body" = "$expected_tap_pr_body"
 
   source_workflow_id="$(gh api \
     "repos/${MAIN_REPO}/actions/workflows/ci.yml" --jq .id)"
