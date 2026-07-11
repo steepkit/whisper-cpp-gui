@@ -9,13 +9,13 @@ external transfer is a model download requested by the user.
 The primary target is Apple Silicon macOS. Linux remains supported by keeping
 OS-specific discovery and browser launch behavior isolated.
 
-> **v0.1.0 validation notice:** no physical Apple Silicon Mac was available.
+> **v0.1.1 validation notice:** no physical Apple Silicon Mac was available.
 > GitHub macOS 14 build/startup and Homebrew source-install CI are required,
 > but real media, 8 GB large-v3 memory use, Downloads permissions, automatic
 > browser launch, and real model downloads remain unverified. The complete
 > physical workflow, including presets, VAD, outputs, progress, cancellation,
 > bootstrap recovery, and browser downloads, was not run. See
-> [ADR 0013](docs/adr/0013-waive-physical-mac-validation-for-v0.1.0.md).
+> [ADR 0016](docs/adr/0016-waive-physical-mac-validation-for-v0.1.1.md).
 
 For the Japanese lab-user guide, see [docs/install_ja.md](docs/install_ja.md).
 

@@ -28,9 +28,9 @@ model SSE の確認では HTTPS transfer を応答しない local proxy へ向�
 
 ## M5(実機検証)
 
-**v0.1.0 owner waiver (2026-07-11):** repository owner は物理 Apple Silicon Mac を所有せず、利用機会もないため、以下は未検証のままリリースする。これは合格扱いではない。物理 M5 手順全体(両 preset、VAD、txt/srt/vtt、SSE progress/log、cancel、browser download、bootstrap recovery を含む)も未実施である。判断根拠と影響は [ADR 0013](adr/0013-waive-physical-mac-validation-for-v0.1.0.md) を参照。GitHub macOS 14 の build/startup と Homebrew source-install CI は packaging の代替ゲートに限り、実 workload、8GB memory、権限、`open`、実モデル DL を代替しない。
+**v0.1.0 owner waiver (2026-07-11) / v0.1.1 owner waiver (2026-07-12):** repository owner は物理 Apple Silicon Mac を所有せず、利用機会もないため、以下は両 version で未検証のままリリースする。これは合格扱いではない。物理 M5 手順全体(両 preset、VAD、txt/srt/vtt、SSE progress/log、cancel、browser download、bootstrap recovery を含む)も未実施である。判断根拠と影響は [ADR 0013](adr/0013-waive-physical-mac-validation-for-v0.1.0.md) と [ADR 0016](adr/0016-waive-physical-mac-validation-for-v0.1.1.md) を参照。GitHub macOS 14 の build/startup と Homebrew source-install CI は packaging の代替ゲートに限り、実 workload、8GB memory、権限、`open`、実モデル DL を代替しない。
 
-medium プリセットは実測根拠がないため v0.1.0 では追加せず、「高速」「高精度」の 2 種を維持する。物理 Mac で問題が判明した場合は patch release で対応する。
+medium プリセットは実測根拠がないため v0.1.1 でも追加せず、「高速」「高精度」の 2 種を維持する。物理 Mac で問題が判明した場合は patch release で対応する。
 
 - [ ] 研究室 Mac で実ファイル(講義録音)の文字起こしが通るか
 - [ ] Apple Silicon 8GB マシンでの large-v3 メモリ挙動 → 厳しければ medium プリセット追加を判断

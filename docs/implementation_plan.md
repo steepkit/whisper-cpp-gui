@@ -416,7 +416,7 @@ Acceptance criteria:
 
 ### M5: 実機検証(人間タスク)
 
-通常は final tag 前の必須ゲートとする。`v0.1.0` だけは、物理 Mac を所有せず利用機会もないという owner の明示判断により [ADR 0013](adr/0013-waive-physical-mac-validation-for-v0.1.0.md) の release exception を適用する。これは M5 合格ではなく未検証リスクの受容であり、release notes と利用者文書で開示する。GitHub-hosted macOS CI は packaging gate の代替に限り、実 workload / 8GB memory / 権限 / browser launch / 実モデル DL の検証を代替しない。
+通常は final tag 前の必須ゲートとする。物理 Mac を所有せず利用機会もないという owner の明示判断により、`v0.1.0` は [ADR 0013](adr/0013-waive-physical-mac-validation-for-v0.1.0.md)、`v0.1.1` は [ADR 0016](adr/0016-waive-physical-mac-validation-for-v0.1.1.md) の version-specific release exception を適用する。これは M5 合格ではなく未検証リスクの受容であり、release notes と利用者文書で開示する。GitHub-hosted macOS CI は packaging gate の代替に限り、実 workload / 8GB memory / 権限 / browser launch / 実モデル DL の検証を代替しない。
 
 Scope:
 - 研究室 Mac で実ファイル(講義録音など)の文字起こし
@@ -430,7 +430,7 @@ Acceptance criteria:
 - `docs/notes.md` の M5 項目が消化されている
 - 8GB マシンで厳しい場合は medium プリセット追加の判断が記録されている
 
-`v0.1.0` exception:
+`v0.1.0` / `v0.1.1` exceptions:
 - `docs/notes.md` の項目を未検証のまま残し、owner waiver、medium を追加しない判断、残余リスクを記録する
 - main の macOS build/startup CI と tap の clean macOS source-install/`brew test` CI を通す
 - 実機検証済みとは表現せず、物理 Mac で判明した問題は patch release で扱う
@@ -490,7 +490,7 @@ UI 変更時は加えて「スタブ環境での手動確認手順」を PR 説�
 | 複数のアプリ instance が同じモデルを DL する | 固定 `.partial` が衝突・破損する | process 内 mutex + ランダム partial + 検証後 atomic publish。古い partial のみ cleanup |
 | Linux で `~/Downloads` が無い | 出力先エラー | 存在確認 + `~/whisper-cpp-gui/` へのフォールバックを仕様化 |
 | macos-14 ランナーのコスト/可用性 | CI 不安定 | ubuntu で主要テスト、macos はビルド + スモークに限定 |
-| v0.1.0 を物理 Apple Silicon 未検証で公開する | 実 workload、8GB memory、権限、browser launch、実モデル DL の問題が利用者環境で初めて判明する | ADR 0013 の version-specific waiver、利用者/Release 警告、clean macOS packaging CI、patch release で対応 |
+| v0.1.0 / v0.1.1 を物理 Apple Silicon 未検証で公開する | 実 workload、8GB memory、権限、browser launch、実モデル DL の問題が利用者環境で初めて判明する | ADR 0013 / ADR 0016 の version-specific waiver、利用者/Release 警告、clean macOS packaging CI、patch release で対応 |
 | private 開発履歴と public 配布 tree が乖離する | review 未実施の内容を配布する | ADR 0014 に従い private final commit と public root commit の Git tree hash を一致させ、public CI を再実行する |
 
 ## 16. Resolved decisions / human tasks
@@ -514,7 +514,7 @@ UI 変更時は加えて「スタブ環境での手動確認手順」を PR 説�
 15. 初回 GitHub repository は AI orchestrator が private で作成してよい。public 化は別途人間承認を要する
 16. recoverable job work は `os.UserCacheDir()/whisper-cpp-gui/jobs` を既定とし、共有 temp の固定名先取りを防ぐ。一回限りの bootstrap だけ `os.MkdirTemp()` を使う
 17. active HTTP connection は v1 既定 128 の内部定数とし、上限超過 connection は handler 到達前に閉じる
-18. `v0.1.0` は物理 Apple Silicon M5 を未検証のまま公開する owner waiver を適用する。M5 合格とは扱わず、ADR 0013、`docs/notes.md`、利用者文書、release notes にリスクを明記する。GitHub macOS CI は packaging 代替に限定する
+18. `v0.1.0` と `v0.1.1` は物理 Apple Silicon M5 を未検証のまま公開する version-specific owner waiver を適用する。M5 合格とは扱わず、ADR 0013 / ADR 0016、`docs/notes.md`、利用者文書、release notes にリスクを明記する。GitHub macOS CI は packaging 代替に限定する
 19. `v0.1.0` の private 開発 repository と tap は履歴ごと private archive に残す。canonical public repository は reviewed final tree から単一 root commit として作り、private/public の Git tree hash 一致と public CI を必須にする。詳細は ADR 0014
 
 M0-3 は 2026-07-10 に Ubuntu + Linuxbrew の実物 `whisper-cli` / `ffmpeg` で完了した。確認結果と macOS / 実モデルで残る検証範囲は `docs/notes.md` と `agent_docs/whisper_cli_reference.md` を正とする。
@@ -523,7 +523,7 @@ M0-3 は 2026-07-10 に Ubuntu + Linuxbrew の実物 `whisper-cli` / `ffmpeg` �
 
 1. tap は private 開発 repository で Formula/CI をレビューした後、ADR 0014 に従って private archive と同一 tree の単一 commit public `steepkit/homebrew-tap` を作る
 2. Codex 実運用前に pre-flight を行う。`codex --version`、`codex doctor --json`、選択 model/effort の利用可否、`--sandbox read-only|workspace-write` の明示、project `.codex/config.toml` の trust/load を確認する。`--profile reviewer/engineer` は対応する profile ファイルがある場合だけ解決確認し、未作成なら省略する
-3. M5: `v0.1.0` は ADR 0013 により owner-waived。物理 Mac の検証項目は未完了の post-release backlog として残す
+3. M5: `v0.1.0` は ADR 0013、`v0.1.1` は ADR 0016 により owner-waived。物理 Mac の検証項目は未完了の post-release backlog として残す
 
 ## 17. Agent orchestration plan(概要)
 
