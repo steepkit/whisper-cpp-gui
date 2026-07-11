@@ -1,8 +1,11 @@
 # Release runbook
 
 This is the manual v1 release flow for maintainers. It covers
-`steepkit/whisper-cpp-gui` and `steepkit/homebrew-tap`. Do not improvise around
-a failed step. Fix the cause and restart the relevant gate.
+`steepkit/whisper-cpp-gui` and `steepkit/homebrew-tap`. Sections 1 through 9
+describe the initial `v0.1.0` clean publication. After both repositories are
+public, preserve their public history and use section 10 for patch releases.
+Do not improvise around a failed step. Fix the cause and restart the relevant
+gate.
 
 ## Release boundary
 
@@ -980,3 +983,272 @@ Record:
 If the source has a product defect, leave the tag intact and create a new patch
 release. If only the Formula is wrong, use a new tap PR and retain the same
 source checksum when the archive itself is unchanged.
+
+## 10. Patch releases after public launch
+
+Do not repeat the private-archive or single-root clean publication steps for a
+patch release. The public repositories are canonical after `v0.1.0`; retain
+their history and use normal reviewed PRs. A patch release still requires an
+explicit owner release approval and either completed physical M5 evidence or a
+new version-specific waiver. A previous waiver never carries forward silently.
+
+### 10.1 Merge release evidence and verify the source candidate
+
+Record the waiver, warnings, and patch-release procedure through the normal
+Issue, draft PR, G1/G2, CI, and G5 flow before creating a tag. Then run from a
+clean public source checkout:
+
+```bash
+(
+  set -euo pipefail
+  VERSION=0.1.1
+  PREVIOUS_VERSION=0.1.0
+  MAIN_REPO=steepkit/whisper-cpp-gui
+  WAIVER=docs/adr/0016-waive-physical-mac-validation-for-v0.1.1.md
+  TAG="v${VERSION}"
+
+  gh auth status
+  git fetch --prune --tags origin
+  git switch main
+  git pull --ff-only origin main
+  test -z "$(git status --porcelain --untracked-files=all)"
+  test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+  test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
+    "v${PREVIOUS_VERSION}"
+  if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null
+  then
+    echo "local tag already exists: ${TAG}" >&2
+    exit 1
+  fi
+  tag_status=0
+  git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null || \
+    tag_status=$?
+  case "$tag_status" in
+  0) echo "remote tag already exists: ${TAG}" >&2; exit 1 ;;
+  2) ;;
+  *) echo "remote tag lookup failed: ${tag_status}" >&2; exit 1 ;;
+  esac
+  test -f "$WAIVER"
+  grep -q '^Status: Accepted$' "$WAIVER"
+  grep -q "waives physical M5 validation for \`v${VERSION}\`" "$WAIVER"
+  grep -q "v${VERSION} owner waiver" docs/notes.md
+  grep -q "v${VERSION} validation notice" README.md
+
+  gofmt_out="$(gofmt -l .)"
+  test -z "$gofmt_out"
+  go build ./...
+  go vet ./...
+  go test -count=1 ./...
+  node testdata/browser/session_behavior_test.mjs
+  shellcheck scripts/publish_clean_snapshot.sh scripts/smoke_start.sh \
+    testdata/stubs/ffmpeg testdata/stubs/smoke-exit \
+    testdata/stubs/smoke-hang testdata/stubs/whisper-cli
+
+  source_commit="$(git rev-parse HEAD)"
+  source_ci_url="$(gh run list --repo "$MAIN_REPO" --workflow CI \
+    --commit "$source_commit" --status success --limit 1 --json url \
+    --jq '.[0].url // ""')"
+  test -n "$source_ci_url"
+  printf 'Source commit: %s\nSource CI: %s\n' \
+    "$source_commit" "$source_ci_url"
+)
+```
+
+### 10.2 Create the immutable tag and draft Release
+
+Prepare release notes whose first section is the version-specific physical-Mac
+warning. Include the user-visible fixes after that warning. Create an annotated
+tag at the verified `main` commit, push it once, and create a draft Release:
+
+```bash
+(
+  set -euo pipefail
+  VERSION=0.1.1
+  TAG="v${VERSION}"
+  MAIN_REPO=steepkit/whisper-cpp-gui
+  RELEASE_NOTES=REPLACE_WITH_REVIEWED_NOTES_FILE
+  source_commit="$(git rev-parse HEAD)"
+
+  test -f "$RELEASE_NOTES"
+  grep -q '^## Physical Mac validation waiver$' "$RELEASE_NOTES"
+  grep -q "v${VERSION}" "$RELEASE_NOTES"
+  if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null
+  then
+    test "$(git cat-file -t "refs/tags/${TAG}")" = tag
+    test "$(git rev-list -n 1 "$TAG")" = "$source_commit"
+  else
+    git -c tag.gpgSign=false tag -a "$TAG" \
+      -m "whisper-cpp-gui ${TAG}" "$source_commit"
+  fi
+
+  tag_status=0
+  git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null || \
+    tag_status=$?
+  case "$tag_status" in
+  0)
+    test "$(gh api "repos/${MAIN_REPO}/commits/${TAG}" --jq .sha)" = \
+      "$source_commit"
+    ;;
+  2)
+    git push origin "refs/tags/${TAG}"
+    ;;
+  *)
+    echo "remote tag lookup failed: ${tag_status}" >&2
+    exit 1
+    ;;
+  esac
+  test "$(gh api "repos/${MAIN_REPO}/commits/${TAG}" --jq .sha)" = \
+    "$source_commit"
+
+  owner="${MAIN_REPO%%/*}"
+  name="${MAIN_REPO#*/}"
+  release_tag="$(gh api graphql \
+    -f owner="$owner" -f name="$name" -f tag="$TAG" \
+    -f query='query($owner: String!, $name: String!, $tag: String!) {
+      repository(owner: $owner, name: $name) {
+        release(tagName: $tag) { isDraft tagName }
+      }
+    }' --jq '.data.repository.release.tagName // ""')"
+  if test -z "$release_tag"
+  then
+    gh release create "$TAG" --repo "$MAIN_REPO" --draft --verify-tag \
+      --title "whisper-cpp-gui ${TAG}" --notes-file "$RELEASE_NOTES"
+  else
+    test "$release_tag" = "$TAG"
+    release_draft="$(gh api graphql \
+      -f owner="$owner" -f name="$name" -f tag="$TAG" \
+      -f query='query($owner: String!, $name: String!, $tag: String!) {
+        repository(owner: $owner, name: $name) {
+          release(tagName: $tag) { isDraft }
+        }
+      }' --jq '.data.repository.release.isDraft')"
+    test "$release_draft" = true
+  fi
+)
+```
+
+Never move or recreate this tag. Correct source defects with a later patch
+version.
+
+### 10.3 Pin and verify the anonymous archive
+
+The tag archive is available while the GitHub Release is still a draft. Fetch
+it without credentials, compute the Formula checksum, and verify the tag still
+resolves to the reviewed commit:
+
+```bash
+(
+  set -euo pipefail
+  VERSION=0.1.1
+  TAG="v${VERSION}"
+  MAIN_REPO=steepkit/whisper-cpp-gui
+  ARCHIVE_URL="https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+
+  curl --fail --location --proto '=https' --tlsv1.2 \
+    --output "$archive" "$ARCHIVE_URL"
+  test -s "$archive"
+  tar -tzf "$archive" >/dev/null
+  archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+  [[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]]
+  printf 'Archive URL: %s\nArchive SHA256: %s\n' \
+    "$ARCHIVE_URL" "$archive_sha256"
+)
+```
+
+### 10.4 Update the public tap through a PR
+
+Create one tap Issue/branch/PR. Change the Formula URL and SHA256 to the values
+from section 10.3, update any exact-version CI assertion, and update user-facing
+waiver references. Before opening the PR, run `ruby -c`, `brew style`, and
+`brew info --json=v2` against the checked-out Formula. The PR must pass tap
+syntax and the clean macOS source-install/`brew test` job. Merge only after the
+Formula PR records its archive URL, SHA256, source commit, source CI, and owner
+approval.
+
+### 10.5 Publish and verify the patch release
+
+Before publishing, verify that the source tag, draft Release, merged tap
+Formula, source CI, and tap CI all refer to the recorded values. Then publish
+the existing draft as latest. Verify anonymous archive access and an actual
+Homebrew update from an installed previous version:
+
+```bash
+(
+  set -euo pipefail
+  VERSION=0.1.1
+  TAG="v${VERSION}"
+  MAIN_REPO=steepkit/whisper-cpp-gui
+  TAP_REPO=steepkit/homebrew-tap
+  FORMULA=steepkit/tap/whisper-cpp-gui
+  EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
+  EXPECTED_TAP_COMMIT=REPLACE_WITH_RECORDED_40_HEX_TAP_COMMIT
+  EXPECTED_ARCHIVE_SHA256=REPLACE_WITH_RECORDED_64_HEX_SHA256
+  SOURCE_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
+  TAP_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
+
+  [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$EXPECTED_TAP_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$EXPECTED_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+  [[ "$SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]]
+  [[ "$TAP_CI_RUN_ID" =~ ^[0-9]+$ ]]
+
+  test "$(gh api "repos/${MAIN_REPO}" --jq .visibility)" = public
+  test "$(gh api "repos/${TAP_REPO}" --jq .visibility)" = public
+  test "$(gh api "repos/${MAIN_REPO}/commits/main" --jq .sha)" = \
+    "$EXPECTED_SOURCE_COMMIT"
+  test "$(gh api "repos/${MAIN_REPO}/commits/${TAG}" --jq .sha)" = \
+    "$EXPECTED_SOURCE_COMMIT"
+  test "$(gh api "repos/${TAP_REPO}/commits/main" --jq .sha)" = \
+    "$EXPECTED_TAP_COMMIT"
+
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
+    --jq .head_sha)" = "$EXPECTED_SOURCE_COMMIT"
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
+    --jq .conclusion)" = success
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
+    --jq .head_sha)" = "$EXPECTED_TAP_COMMIT"
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
+    --jq .conclusion)" = success
+
+  formula="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+    "https://raw.githubusercontent.com/${TAP_REPO}/main/Formula/whisper-cpp-gui.rb")"
+  grep -Fq "archive/refs/tags/${TAG}.tar.gz" <<<"$formula"
+  grep -Fq "sha256 \"${EXPECTED_ARCHIVE_SHA256}\"" <<<"$formula"
+
+  draft_state="$(gh release view "$TAG" --repo "$MAIN_REPO" \
+    --json isDraft --jq .isDraft)"
+  release_body="$(gh release view "$TAG" --repo "$MAIN_REPO" \
+    --json body --jq .body)"
+  grep -Fq '## Physical Mac validation waiver' <<<"$release_body"
+  grep -Fq "No physical Apple Silicon Mac was available for ${TAG}." \
+    <<<"$release_body"
+  grep -Fq 'ADR 0016' <<<"$release_body"
+  case "$draft_state" in
+  true) gh release edit "$TAG" --repo "$MAIN_REPO" --draft=false --latest ;;
+  false) gh release edit "$TAG" --repo "$MAIN_REPO" --latest ;;
+  *) echo "unexpected draft state: ${draft_state}" >&2; exit 1 ;;
+  esac
+  test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
+    "$TAG"
+  curl --fail --location --proto '=https' --tlsv1.2 \
+    --output /dev/null \
+    "https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
+
+  brew update
+  if brew list --versions "$FORMULA" >/dev/null 2>&1
+  then
+    brew upgrade "$FORMULA"
+  else
+    brew install --build-from-source "$FORMULA"
+  fi
+  test "$(whisper-cpp-gui --version)" = \
+    "whisper-cpp-gui ${VERSION}"
+)
+```
+
+Record the source commit/tag/Release URL, archive SHA256, Formula and tap merge
+commits, exact source and tap CI URLs, anonymous archive result, and Homebrew
+version output. If publication fails after the tag exists, keep the tag and
+draft Release intact, fix the failing gate, and resume from that gate.

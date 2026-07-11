@@ -4,7 +4,7 @@
 
 > この手順は public release の配布開始後に使用します。インストール時に repository が見つからない、または 404 になる場合はまだ配布前です。token を URL やコマンドへ追加せず、管理者へ連絡してください。
 
-> **v0.1.0 の未検証事項:** 物理 Apple Silicon Mac を利用できないため、実際の Mac では一度も動作確認していません。実講義録音、「高速」「高精度」の両設定、VAD、txt/srt/vtt 出力、進捗表示、キャンセル、ブラウザからの保存、8GB 機、自動ブラウザ起動、実モデル取得を含む一連の操作が未検証です。
+> **v0.1.1 の未検証事項:** 物理 Apple Silicon Mac を利用できないため、実際の Mac では一度も動作確認していません。実講義録音、「高速」「高精度」の両設定、VAD、txt/srt/vtt 出力、進捗表示、キャンセル、ブラウザからの保存、8GB 機、自動ブラウザ起動、実モデル取得を含む一連の操作が未検証です。
 >
 > 公開前に GitHub 上の macOS 環境で build、起動、Homebrew install を確認しますが、実際の Mac 操作の代わりにはなりません。高精度モデル利用時のメモリ不足、結果を保存できない、モデルを取得できないなどの問題が残る可能性があります。問題が起きた場合は処理を中止し、入力した音声・動画、文字起こし結果、モデルファイル、token、個人用 path を添付せず repository の Issue へ報告してください。
 
@@ -213,6 +213,6 @@ brew reinstall whisper-cpp ffmpeg
 
 同じ OS user の権限ですでに動く悪意ある process は脅威モデル外です。共有 Mac では自分の user account で利用してください。
 
-## v0.1.0 で残る実機確認
+## v0.1.1 で残る実機確認
 
-研究室 Mac の実講義録音、Apple Silicon 8GB での large-v3 memory、`open` の自動起動、実モデル取得速度などは [実機検証メモ](notes.md) に未検証として残しています。owner waiver により v0.1.0 の公開は進めますが、これらを検証済みとは扱いません。判断の詳細は [ADR 0013](adr/0013-waive-physical-mac-validation-for-v0.1.0.md) を参照してください。
+研究室 Mac の実講義録音、Apple Silicon 8GB での large-v3 memory、`open` の自動起動、実モデル取得速度などは [実機検証メモ](notes.md) に未検証として残しています。owner waiver により v0.1.1 の公開は進めますが、これらを検証済みとは扱いません。判断の詳細は [ADR 0016](adr/0016-waive-physical-mac-validation-for-v0.1.1.md) を参照してください。
