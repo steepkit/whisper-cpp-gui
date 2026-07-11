@@ -1175,7 +1175,8 @@ waiver references. Before opening the PR, run `ruby -c`, `brew style`, and
 `brew info --json=v2` against the checked-out Formula. The PR must pass tap
 syntax and the clean macOS source-install/`brew test` job. Merge only after the
 Formula PR records its archive URL, SHA256, source commit, source CI, and owner
-approval.
+approval. Record the PR number and exact head branch for section 10.5; direct
+pushes to tap `main` do not satisfy this gate.
 
 ### 10.5 Publish and verify the patch release
 
@@ -1197,12 +1198,15 @@ Homebrew update from an installed previous version:
   EXPECTED_ARCHIVE_SHA256=REPLACE_WITH_RECORDED_64_HEX_SHA256
   SOURCE_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
   TAP_CI_RUN_ID=REPLACE_WITH_RECORDED_NUMERIC_RUN_ID
+  TAP_PR_NUMBER=REPLACE_WITH_RECORDED_NUMERIC_PR_NUMBER
+  EXPECTED_TAP_PR_HEAD=release/v0.1.1
 
   [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   [[ "$EXPECTED_TAP_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   [[ "$EXPECTED_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]]
   [[ "$TAP_CI_RUN_ID" =~ ^[0-9]+$ ]]
+  [[ "$TAP_PR_NUMBER" =~ ^[0-9]+$ ]]
 
   test "$(gh api "repos/${MAIN_REPO}" --jq .visibility)" = public
   test "$(gh api "repos/${TAP_REPO}" --jq .visibility)" = public
@@ -1212,6 +1216,20 @@ Homebrew update from an installed previous version:
     "$EXPECTED_SOURCE_COMMIT"
   test "$(gh api "repos/${TAP_REPO}/commits/main" --jq .sha)" = \
     "$EXPECTED_TAP_COMMIT"
+
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json state --jq .state)" = MERGED
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json isDraft --jq .isDraft)" = false
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json baseRefName --jq .baseRefName)" = main
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json headRefName --jq .headRefName)" = "$EXPECTED_TAP_PR_HEAD"
+  test "$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json mergeCommit --jq .mergeCommit.oid)" = "$EXPECTED_TAP_COMMIT"
+  tap_pr_body="$(gh pr view "$TAP_PR_NUMBER" --repo "$TAP_REPO" \
+    --json body --jq .body)"
+  grep -Fq 'The repository owner explicitly approved' <<<"$tap_pr_body"
 
   source_workflow_id="$(gh api \
     "repos/${MAIN_REPO}/actions/workflows/ci.yml" --jq .id)"
@@ -1238,10 +1256,24 @@ Homebrew update from an installed previous version:
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}/jobs" \
     --paginate --jq '[.jobs[] | select(.name == "macOS source install" and .conclusion == "success")] | length')" = 1
 
-  formula="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+  formula="$(env -u GH_TOKEN -u GITHUB_TOKEN \
+    curl --disable --fail --silent --show-error --proto '=https' \
+    --proto-redir '=https' --tlsv1.2 \
     "https://raw.githubusercontent.com/${TAP_REPO}/main/Formula/whisper-cpp-gui.rb")"
   grep -Fq "archive/refs/tags/${TAG}.tar.gz" <<<"$formula"
   grep -Fq "sha256 \"${EXPECTED_ARCHIVE_SHA256}\"" <<<"$formula"
+
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+  env -u GH_TOKEN -u GITHUB_TOKEN \
+    curl --disable --fail --location --proto '=https' \
+    --proto-redir '=https' --tlsv1.2 --remove-on-error \
+    --output "$archive" \
+    "https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
+  test -s "$archive"
+  tar -tzf "$archive" >/dev/null
+  current_archive_sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  test "$current_archive_sha256" = "$EXPECTED_ARCHIVE_SHA256"
 
   draft_state="$(gh release view "$TAG" --repo "$MAIN_REPO" \
     --json isDraft --jq .isDraft)"
@@ -1258,11 +1290,6 @@ Homebrew update from an installed previous version:
   esac
   test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
     "$TAG"
-  env -u GH_TOKEN -u GITHUB_TOKEN \
-    curl --disable --fail --location --proto '=https' \
-    --proto-redir '=https' --tlsv1.2 \
-    --output /dev/null \
-    "https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
 
   brew update
   brew list --versions "$FORMULA" >/dev/null
