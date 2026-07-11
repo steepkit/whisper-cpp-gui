@@ -1072,6 +1072,12 @@ tag at the verified `main` commit, push it once, and create a draft Release:
 
   [[ "$EXPECTED_RELEASE_NOTES_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  origin_url="$(git remote get-url origin)"
+  case "$origin_url" in
+    https://github.com/steepkit/whisper-cpp-gui.git | \
+      git@github.com:steepkit/whisper-cpp-gui.git) ;;
+    *) echo "unexpected main remote: ${origin_url}" >&2; exit 1 ;;
+  esac
   git fetch --prune --tags origin
   git switch main
   git pull --ff-only origin main
