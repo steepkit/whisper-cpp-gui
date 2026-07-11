@@ -17,7 +17,7 @@ var (
 	jsTextLiteral = regexp.MustCompile(`(?:textContent|innerText)\s*=\s*(?:"[^"]+"|'[^']+'|` + "`[^`]+`" + `)`)
 )
 
-func TestBootstrapRemovesTokenFragmentBeforeAppStartup(t *testing.T) {
+func TestBootstrapLoadsBeforeApp(t *testing.T) {
 	index, err := fs.ReadFile(Assets, "index.html")
 	if err != nil {
 		t.Fatalf("reading index.html: %v", err)
@@ -31,19 +31,52 @@ func TestBootstrapRemovesTokenFragmentBeforeAppStartup(t *testing.T) {
 	if strings.Index(indexContent, `src="/bootstrap.js"`) > strings.Index(indexContent, `src="/app.js"`) {
 		t.Fatal("bootstrap.js must load before app.js")
 	}
+}
 
-	script, err := fs.ReadFile(Assets, "bootstrap.js")
-	if err != nil {
-		t.Fatalf("reading bootstrap.js: %v", err)
-	}
-	content := string(script)
-	for _, required := range []string{"window.location.hash", "window.history.replaceState", "__WHISPER_CPP_GUI__"} {
-		if !strings.Contains(content, required) {
-			t.Errorf("bootstrap.js is missing %q", required)
+func TestSSEErrorsProbeHeaderAuthentication(t *testing.T) {
+	app := readAsset(t, "app.js")
+	for _, required := range []string{
+		`apiFetch("/api/config", { method: "GET" })`,
+		"probeJobStream(id, source)",
+		"probeStreamAuthentication()",
+		"closeAllModelEvents()",
+		"closeEvents()",
+	} {
+		if !strings.Contains(app, required) {
+			t.Errorf("app.js is missing SSE authentication probe marker %q", required)
 		}
 	}
-	if strings.Index(content, "window.history.replaceState") > strings.Index(content, "Object.defineProperty") {
-		t.Error("bootstrap.js must remove the fragment before exposing bootstrap state")
+}
+
+func TestAppRestoresActiveJobAfterReload(t *testing.T) {
+	app := readAsset(t, "app.js")
+	for _, required := range []string{
+		`const activeJobStorageKey = "whisper-cpp-gui.active-job"`,
+		"window.sessionStorage.getItem(activeJobStorageKey)",
+		"window.sessionStorage.setItem(activeJobStorageKey, id)",
+		"window.sessionStorage.removeItem(activeJobStorageKey)",
+		"async function restoreActiveJob()",
+		"await restoreActiveJob()",
+		"openEvents(jobID)",
+		"error.status === 404",
+		"restoreAttemptLimit",
+		"transientRestoreError(error)",
+		"waitForRestoreRetry(attempt)",
+	} {
+		if !strings.Contains(app, required) {
+			t.Errorf("app.js is missing active-job reload marker %q", required)
+		}
+	}
+}
+
+func TestBrowserAuthenticationAvoidsPersistentStorageAndCookies(t *testing.T) {
+	for _, path := range []string{"bootstrap.js", "app.js"} {
+		content := readAsset(t, path)
+		for _, forbidden := range []string{"localStorage", "document.cookie"} {
+			if strings.Contains(content, forbidden) {
+				t.Errorf("%s must not persist authentication with %q", path, forbidden)
+			}
+		}
 	}
 }
 

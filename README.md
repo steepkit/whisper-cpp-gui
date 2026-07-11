@@ -59,6 +59,7 @@ replacement for that file because API access requires the startup token.
 Requirements:
 
 - Go 1.22 or newer
+- Node.js 18 or newer for browser behavior tests (no npm packages)
 - Bash and ShellCheck for shell-script validation
 - no real `whisper-cli`, `ffmpeg`, models, or macOS host for the automated test
   suite
@@ -72,6 +73,7 @@ gofmt_out="$(gofmt -l .)" && test -z "$gofmt_out"
 go build ./...
 go vet ./...
 go test ./...
+node testdata/browser/session_behavior_test.mjs
 shellcheck scripts/smoke_start.sh testdata/stubs/*
 ```
 
@@ -108,8 +110,10 @@ leaf used by the server and command wiring.
 - Each launch creates a random 256-bit token. Ordinary APIs accept it only in
   `X-Auth-Token`.
 - A private mode-`0600` bootstrap file transfers the token in a URL fragment;
-  the SPA removes the fragment immediately. The token is not put in launcher
-  arguments or application logs.
+  the SPA removes the fragment immediately. The validated token and active job
+  ID are kept only in same-tab `sessionStorage` so a reload can reconnect to
+  the job. They are not written to `localStorage` or cookies. The token is not
+  put in launcher arguments or application logs.
 - Native `EventSource` cannot set the auth header, so job and model SSE URLs
   carry the token in a query parameter. Those URLs can appear in browser
   diagnostics. This is an accepted residual risk, reduced by loopback-only

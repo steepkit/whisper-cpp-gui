@@ -47,7 +47,7 @@ whisper-cpp-gui の開発における AI エージェントの役割分担・レ
 | Gate | 名称 | 実施者 | 内容 | 通過条件 |
 |---|---|---|---|---|
 | **G0** | 設計レビュー | Independent peer(design_alternative)+ 人間 | 対象: M1-4 パイプライン、ジョブ状態機械、モデル DL 設計。orchestrator 案を見せずに peer に同じ課題の設計をさせ、差分を比較 | 人間が設計を承認 |
-| **G1** | 自己検証 | verifier | `gofmt_out="$(gofmt -l .)" && test -z "$gofmt_out"` / `go build` / `go vet` / `go test ./...`(スタブ E2E 含む) | 4 つ全通過。FAIL 時は実装者へ差し戻し |
+| **G1** | 自己検証 | verifier | `gofmt_out="$(gofmt -l .)" && test -z "$gofmt_out"` / `go build` / `go vet` / `go test ./...`(スタブ E2E 含む) / `node testdata/browser/session_behavior_test.mjs` | 全コマンド通過。FAIL 時は実装者へ差し戻し |
 | **Draft PR** | 記録面の確保 | Orchestrator | G1 通過後に draft PR を作る。GitHub 未初期化の bootstrap 期は `docs/reviews/bootstrap/` の一時ログで代替 | PR または代替ログがあり、G2/G3 の記録先が決まっている |
 | **G2** | ブラインドレビュー | codex-reviewer(review_blind) | draft PR の diff + Issue 本文 + AGENTS.md のみを渡す。**Claude の設計意図・自己評価は渡さない** | Codex が blocking 指摘なし、または G3 で解消 |
 | **G3** | 統合・修正 | Orchestrator | 指摘を「同意(修正)/不同意(反論 1 往復)/人間判断」に分類。修正後 G1 を再実行。**指摘は黙殺せず全件の扱いを PR に記録** | 全指摘がクローズ、G1 再通過 |

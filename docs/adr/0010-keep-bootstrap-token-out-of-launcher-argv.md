@@ -1,6 +1,8 @@
 # 0010: Keep the bootstrap token out of launcher argv
 
-Status: Accepted
+Status: Superseded
+
+Superseded by: 0015-preserve-session-across-same-tab-reloads.md
 
 Date: 2026-07-10
 
