@@ -233,15 +233,23 @@ async function waitFor(predicate, message) {
   assert.fail(message);
 }
 
-async function launchApp({ outputStatuses, jobStatus = "running" }) {
-  const storage = createStorage({
-    [activeJobStorageKey]: jobID,
-    [authStorageKey]: token,
-  });
+async function launchApp({
+  configStatus = 200,
+  jobOutputs = [],
+  jobStatus = "running",
+  outputStatuses = [200],
+  storedJobID = jobID,
+} = {}) {
+  const storedValues = { [authStorageKey]: token };
+  if (storedJobID !== null) {
+    storedValues[activeJobStorageKey] = storedJobID;
+  }
+  const storage = createStorage(storedValues);
   const document = createDocument();
   const EventSource = createEventSourceClass();
   const fetchCalls = [];
   const retryDelays = [];
+  let configCallCount = 0;
   let outputCallCount = 0;
   let modelCallCount = 0;
   const descriptor = {
@@ -257,6 +265,10 @@ async function launchApp({ outputStatuses, jobStatus = "running" }) {
       return makeResponse(200, {});
     }
     if (path === "/api/config") {
+      configCallCount += 1;
+      if (configStatus !== 200) {
+        return makeResponse(configStatus, errorPayload(configStatus));
+      }
       return makeResponse(200, { models: [descriptor], presets: [], tools: {} });
     }
     if (path === "/api/models") {
@@ -266,12 +278,15 @@ async function launchApp({ outputStatuses, jobStatus = "running" }) {
       });
     }
     if (path === `/api/jobs/${jobID}/outputs`) {
+      if (!outputStatuses.length) {
+        throw new Error("unexpected active-job lookup");
+      }
       const status = outputStatuses[Math.min(outputCallCount, outputStatuses.length - 1)];
       outputCallCount += 1;
       if (status !== 200) {
         return makeResponse(status, errorPayload(status));
       }
-      return makeResponse(200, { id: jobID, outputs: [], status: jobStatus });
+      return makeResponse(200, { id: jobID, outputs: jobOutputs, status: jobStatus });
     }
     throw new Error(`unexpected fetch path: ${path}`);
   }
@@ -311,8 +326,13 @@ async function launchApp({ outputStatuses, jobStatus = "running" }) {
   });
   vm.runInContext(appSource, context);
   document.dispatch("DOMContentLoaded");
+  const validStoredJob = typeof storedJobID === "string" && /^job-[0-9a-f]{32}$/.test(storedJobID);
   await waitFor(
-    () => EventSource.instances.length > 0 || outputCallCount >= outputStatuses.length && modelCallCount > 0,
+    () => configCallCount > 0 && (
+      configStatus !== 200 ||
+      EventSource.instances.length > 0 ||
+      modelCallCount > 0 && (!validStoredJob || outputCallCount >= outputStatuses.length)
+    ),
     "application startup did not finish",
   );
 
@@ -327,6 +347,29 @@ async function launchApp({ outputStatuses, jobStatus = "running" }) {
     storage,
   };
 }
+
+test("ordinary API 401 clears stored authentication and job state", async () => {
+  const app = await launchApp({ configStatus: 401 });
+  assert.equal(app.storage.getItem(authStorageKey), null);
+  assert.equal(app.storage.getItem(activeJobStorageKey), null);
+  assert.equal(app.EventSource.instances.length, 0);
+  assert.equal(app.document.getElementById("error-panel").hidden, false);
+});
+
+test("an invalid stored active-job ID is removed without an API lookup", async () => {
+  const app = await launchApp({ outputStatuses: [], storedJobID: "job-invalid" });
+  assert.equal(app.storage.getItem(activeJobStorageKey), null);
+  assert.equal(app.outputCallCount, 0);
+  assert.equal(app.EventSource.instances.length, 0);
+});
+
+test("initial active-job lookup 404 removes the stale ID", async () => {
+  const app = await launchApp({ outputStatuses: [404] });
+  assert.equal(app.storage.getItem(activeJobStorageKey), null);
+  assert.equal(app.storage.getItem(authStorageKey), token);
+  assert.equal(app.outputCallCount, 1);
+  assert.equal(app.EventSource.instances.length, 0);
+});
 
 test("active-job restore recovers from transient lookup failures", async () => {
   const app = await launchApp({ outputStatuses: [503, 429, 200] });
@@ -367,6 +410,22 @@ test("terminal job SSE 401 clears session state", async () => {
   assert.equal(app.storage.getItem(activeJobStorageKey), null);
   assert.equal(app.storage.getItem(authStorageKey), null);
   assert.equal(app.document.getElementById("error-panel").hidden, false);
+});
+
+test("terminal SSE snapshot renders outputs without another outputs fetch", async () => {
+  const app = await launchApp({ jobStatus: "done" });
+  const source = app.EventSource.instances[0];
+  source.emit("snapshot", {
+    data: JSON.stringify({ id: jobID, logs: [], outputs: ["transcript.txt"], progress: 100, status: "done" }),
+  });
+  await waitFor(
+    () => source.closed && app.document.getElementById("download-list").children.length === 1,
+    "terminal snapshot outputs were not rendered",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(app.outputCallCount, 1);
+  assert.equal(app.document.getElementById("download-panel").hidden, false);
 });
 
 test("API recovery requests keep authentication in the header", async () => {
