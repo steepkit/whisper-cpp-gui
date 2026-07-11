@@ -1067,7 +1067,15 @@ tag at the verified `main` commit, push it once, and create a draft Release:
   TAG="v${VERSION}"
   MAIN_REPO=steepkit/whisper-cpp-gui
   RELEASE_NOTES=REPLACE_WITH_REVIEWED_NOTES_FILE
-  source_commit="$(git rev-parse HEAD)"
+  EXPECTED_SOURCE_COMMIT=REPLACE_WITH_RECORDED_40_HEX_SOURCE_COMMIT
+
+  [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  git fetch --prune --tags origin
+  git switch main
+  git pull --ff-only origin main
+  test -z "$(git status --porcelain --untracked-files=all)"
+  test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+  test "$(git rev-parse origin/main)" = "$EXPECTED_SOURCE_COMMIT"
 
   test -f "$RELEASE_NOTES"
   grep -q '^## Physical Mac validation waiver$' "$RELEASE_NOTES"
@@ -1075,10 +1083,10 @@ tag at the verified `main` commit, push it once, and create a draft Release:
   if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null
   then
     test "$(git cat-file -t "refs/tags/${TAG}")" = tag
-    test "$(git rev-list -n 1 "$TAG")" = "$source_commit"
+    test "$(git rev-list -n 1 "$TAG")" = "$EXPECTED_SOURCE_COMMIT"
   else
     git -c tag.gpgSign=false tag -a "$TAG" \
-      -m "whisper-cpp-gui ${TAG}" "$source_commit"
+      -m "whisper-cpp-gui ${TAG}" "$EXPECTED_SOURCE_COMMIT"
   fi
 
   tag_status=0
@@ -1087,7 +1095,7 @@ tag at the verified `main` commit, push it once, and create a draft Release:
   case "$tag_status" in
   0)
     test "$(gh api "repos/${MAIN_REPO}/commits/${TAG}" --jq .sha)" = \
-      "$source_commit"
+      "$EXPECTED_SOURCE_COMMIT"
     ;;
   2)
     git push origin "refs/tags/${TAG}"
@@ -1098,7 +1106,7 @@ tag at the verified `main` commit, push it once, and create a draft Release:
     ;;
   esac
   test "$(gh api "repos/${MAIN_REPO}/commits/${TAG}" --jq .sha)" = \
-    "$source_commit"
+    "$EXPECTED_SOURCE_COMMIT"
 
   owner="${MAIN_REPO%%/*}"
   name="${MAIN_REPO#*/}"
@@ -1146,11 +1154,13 @@ resolves to the reviewed commit:
   archive="$(mktemp)"
   trap 'rm -f "$archive"' EXIT
 
-  curl --fail --location --proto '=https' --tlsv1.2 \
+  env -u GH_TOKEN -u GITHUB_TOKEN \
+    curl --disable --fail --location --proto '=https' \
+    --proto-redir '=https' --tlsv1.2 --remove-on-error \
     --output "$archive" "$ARCHIVE_URL"
   test -s "$archive"
   tar -tzf "$archive" >/dev/null
-  archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+  archive_sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
   [[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]]
   printf 'Archive URL: %s\nArchive SHA256: %s\n' \
     "$ARCHIVE_URL" "$archive_sha256"
@@ -1203,14 +1213,30 @@ Homebrew update from an installed previous version:
   test "$(gh api "repos/${TAP_REPO}/commits/main" --jq .sha)" = \
     "$EXPECTED_TAP_COMMIT"
 
+  source_workflow_id="$(gh api \
+    "repos/${MAIN_REPO}/actions/workflows/ci.yml" --jq .id)"
+  tap_workflow_id="$(gh api \
+    "repos/${TAP_REPO}/actions/workflows/ci.yml" --jq .id)"
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
+    --jq .workflow_id)" = "$source_workflow_id"
   test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
     --jq .head_sha)" = "$EXPECTED_SOURCE_COMMIT"
   test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}" \
     --jq .conclusion)" = success
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "Ubuntu checks" and .conclusion == "success")] | length')" = 1
+  test "$(gh api "repos/${MAIN_REPO}/actions/runs/${SOURCE_CI_RUN_ID}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "macOS 14 build and startup smoke" and .conclusion == "success")] | length')" = 1
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
+    --jq .workflow_id)" = "$tap_workflow_id"
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
     --jq .head_sha)" = "$EXPECTED_TAP_COMMIT"
   test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}" \
     --jq .conclusion)" = success
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "Tap syntax" and .conclusion == "success")] | length')" = 1
+  test "$(gh api "repos/${TAP_REPO}/actions/runs/${TAP_CI_RUN_ID}/jobs" \
+    --paginate --jq '[.jobs[] | select(.name == "macOS source install" and .conclusion == "success")] | length')" = 1
 
   formula="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
     "https://raw.githubusercontent.com/${TAP_REPO}/main/Formula/whisper-cpp-gui.rb")"
@@ -1232,17 +1258,17 @@ Homebrew update from an installed previous version:
   esac
   test "$(gh api "repos/${MAIN_REPO}/releases/latest" --jq .tag_name)" = \
     "$TAG"
-  curl --fail --location --proto '=https' --tlsv1.2 \
+  env -u GH_TOKEN -u GITHUB_TOKEN \
+    curl --disable --fail --location --proto '=https' \
+    --proto-redir '=https' --tlsv1.2 \
     --output /dev/null \
     "https://github.com/${MAIN_REPO}/archive/refs/tags/${TAG}.tar.gz"
 
   brew update
-  if brew list --versions "$FORMULA" >/dev/null 2>&1
-  then
-    brew upgrade "$FORMULA"
-  else
-    brew install --build-from-source "$FORMULA"
-  fi
+  brew list --versions "$FORMULA" >/dev/null
+  test "$(whisper-cpp-gui --version)" = \
+    "whisper-cpp-gui 0.1.0"
+  brew upgrade "$FORMULA"
   test "$(whisper-cpp-gui --version)" = \
     "whisper-cpp-gui ${VERSION}"
 )
