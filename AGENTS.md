@@ -33,7 +33,7 @@ Go は標準ライブラリのみ(`go.mod` に外部依存を追加しない)。
 ### 5. セキュリティ要件(localhost でも必須)
 - bind は `127.0.0.1` のみ
 - 起動時 `crypto/rand` token を全 `/api/*` で検証する。通常 API はヘッダ `X-Auth-Token` のみ、ブラウザ `EventSource` を使う SSE だけクエリ token を許可する
-- ブラウザへの初回 token 受け渡しは URL fragment を使い、SPA は取得直後に `history.replaceState` で URL から除去する。静的/API 応答には `Referrer-Policy: no-referrer` と `Cache-Control: no-store` を付ける
+- ブラウザへの初回 token 受け渡しは URL fragment を使い、SPA は取得直後に `history.replaceState` で URL から除去する。同一 tab の再読み込み回復に限り token と active job ID を `sessionStorage` に保存する。不正 fragment は除去して保存済みの有効 token へフォールバックし、storage 上の無効値・通常 API の 401・header probe で確認した SSE の 401 では該当 entry を削除する。`localStorage` と Cookie には保存しない。静的/API 応答には `Referrer-Policy: no-referrer` と `Cache-Control: no-store` を付ける
 - Host ヘッダが `127.0.0.1:{port}` / `localhost:{port}` 以外は 403
 - `/api/*` の Origin は、空 Origin または `http://127.0.0.1:{port}` / `http://localhost:{port}` のみ許可
 - ファイル配信は `filepath.Clean` 後にジョブディレクトリ配下であることを検証

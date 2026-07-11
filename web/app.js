@@ -76,10 +76,15 @@
   const modelStates = new Set(["missing", "downloading", "downloaded", "invalid"]);
   const modelNamePattern = /^[a-z0-9][a-z0-9._-]{0,127}$/;
   const modelErrorCodePattern = /^[a-z][a-z0-9_]{0,63}$/;
+  const jobIDPattern = /^job-[0-9a-f]{32}$/;
+  const activeJobStorageKey = "whisper-cpp-gui.active-job";
+  const restoreAttemptLimit = 3;
+  const restoreRetryBaseDelay = 250;
   const sileroVADModel = "silero-vad";
 
   const state = {
     activeJob: null,
+    authenticationProbe: null,
     cancelPending: false,
     config: null,
     eventSource: null,
@@ -128,6 +133,39 @@
     return { "X-Auth-Token": window.__WHISPER_CPP_GUI__.token };
   }
 
+  function clearStoredActiveJob() {
+    try {
+      window.sessionStorage.removeItem(activeJobStorageKey);
+    } catch (_) {
+      // Session storage is optional; the current page remains usable without recovery.
+    }
+  }
+
+  function readStoredActiveJob() {
+    try {
+      const id = window.sessionStorage.getItem(activeJobStorageKey) || "";
+      if (jobIDPattern.test(id)) {
+        return id;
+      }
+      window.sessionStorage.removeItem(activeJobStorageKey);
+    } catch (_) {
+      // Continue without reload recovery.
+    }
+    return "";
+  }
+
+  function storeActiveJob(id) {
+    if (!jobIDPattern.test(id)) {
+      clearStoredActiveJob();
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(activeJobStorageKey, id);
+    } catch (_) {
+      // The live page still tracks the job in memory.
+    }
+  }
+
   function apiPath(path) {
     return path;
   }
@@ -138,17 +176,49 @@
       headers: { ...authHeaders(), ...((options && options.headers) || {}) },
     });
     if (!response.ok) {
+      const authenticationFailed = response.status === 401;
+      if (authenticationFailed) {
+        if (typeof window.__WHISPER_CPP_GUI__.clearStoredToken === "function") {
+          window.__WHISPER_CPP_GUI__.clearStoredToken();
+        }
+        clearStoredActiveJob();
+      }
       let code = "";
       try {
         code = (await response.json()).error_code || "";
       } catch (_) {
         code = "";
       }
-      const error = new Error(code || String(response.status));
-      error.code = code;
+      const errorCode = authenticationFailed ? "authentication" : code;
+      const error = new Error(errorCode || String(response.status));
+      error.code = errorCode;
+      error.status = response.status;
       throw error;
     }
     return response;
+  }
+
+  function probeStreamAuthentication() {
+    if (state.authenticationProbe) {
+      return state.authenticationProbe;
+    }
+    const probe = apiFetch("/api/config", { method: "GET" })
+      .then((response) => response.text())
+      .catch((error) => {
+        if (error && error.code === "authentication") {
+          closeEvents();
+          closeAllModelEvents();
+          setConnection(K.connectionError);
+          showRequestError(error);
+        }
+      })
+      .finally(() => {
+        if (state.authenticationProbe === probe) {
+          state.authenticationProbe = null;
+        }
+      });
+    state.authenticationProbe = probe;
+    return probe;
   }
 
   function errorText(code) {
@@ -634,6 +704,7 @@
       if (state.modelEventSources.get(name) === source && state.models.get(name)?.state === "downloading") {
         state.modelActionErrors.set(name, "stream_error");
         renderModelDependentUI();
+        probeStreamAuthentication();
       }
     });
   }
@@ -1024,15 +1095,18 @@
     };
   }
 
-  function consumeSnapshot(value) {
+  function applyActiveJobSnapshot(value) {
     state.activeJob = snapshotFrom(value);
+    storeActiveJob(state.activeJob.id);
     renderLogs(state.activeJob.logs);
+    renderDownloads(state.activeJob.outputs);
     renderJob();
+  }
+
+  function consumeSnapshot(value) {
+    applyActiveJobSnapshot(value);
     if (isTerminal(state.activeJob.status)) {
       closeEvents();
-      if (state.activeJob.status === "done") {
-        loadOutputs(state.activeJob.id);
-      }
     }
   }
 
@@ -1082,6 +1156,7 @@
     source.addEventListener("error", () => {
       if (state.eventSource === source && state.activeJob && !isTerminal(state.activeJob.status)) {
         setConnection(K.connectionReconnecting);
+        probeStreamAuthentication();
       }
     });
   }
@@ -1105,18 +1180,52 @@
     }
   }
 
-  async function loadOutputs(jobID) {
-    try {
-      const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobID)}/outputs`, { method: "GET" });
-      const result = await response.json();
-      if (!state.activeJob || state.activeJob.id !== jobID) {
+  function waitForRestoreRetry(attempt) {
+    const delay = restoreRetryBaseDelay * (2 ** attempt);
+    return new Promise((resolve) => window.setTimeout(resolve, delay));
+  }
+
+  function transientRestoreError(error) {
+    return !error || typeof error.status !== "number" || [429, 500, 502, 503, 504].includes(error.status);
+  }
+
+  async function restoreActiveJob() {
+    const jobID = readStoredActiveJob();
+    if (!jobID) {
+      return;
+    }
+    for (let attempt = 0; attempt < restoreAttemptLimit; attempt += 1) {
+      try {
+        const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobID)}/outputs`, { method: "GET" });
+        const value = await response.json();
+        if (!value || value.id !== jobID || typeof value.status !== "string" || !Array.isArray(value.outputs)) {
+          clearStoredActiveJob();
+          return;
+        }
+        applyActiveJobSnapshot(value);
+        openEvents(jobID);
         return;
+      } catch (error) {
+        if (error && error.status === 404) {
+          clearStoredActiveJob();
+          return;
+        }
+        if (error && error.code === "authentication") {
+          setConnection(K.connectionError);
+          showRequestError(error);
+          return;
+        }
+        if (!transientRestoreError(error) || attempt === restoreAttemptLimit - 1) {
+          setConnection(K.connectionError);
+          showRequestError(error);
+          return;
+        }
+        setConnection(K.connectionReconnecting);
+        await waitForRestoreRetry(attempt);
+        if (readStoredActiveJob() !== jobID || state.activeJob) {
+          return;
+        }
       }
-      const outputs = Array.isArray(result.outputs) ? result.outputs : [];
-      state.activeJob.outputs = outputs;
-      renderDownloads(outputs);
-    } catch (error) {
-      showRequestError(error);
     }
   }
 
@@ -1152,10 +1261,7 @@
     try {
       const response = await apiFetch("/api/jobs", { method: "POST", body: form });
       const result = await response.json();
-      state.activeJob = snapshotFrom({ id: result.id, status: result.status, logs: [], outputs: [] });
-      renderLogs([]);
-      renderDownloads([]);
-      renderJob();
+      applyActiveJobSnapshot({ id: result.id, status: result.status, logs: [], outputs: [] });
       openEvents(result.id);
     } catch (error) {
       showRequestError(error);
@@ -1334,6 +1440,7 @@
       return;
     }
     if (await loadConfig()) {
+      await restoreActiveJob();
       await loadModels();
     }
   }

@@ -195,7 +195,7 @@ Scope:
 - `/api/*` の Origin ヘッダを検証する。空 Origin は CLI/curl/一部 GET を考慮して許可し、非空 Origin は `http://127.0.0.1:{port}` / `http://localhost:{port}` のみ許可する
 - active HTTP connection は既定 128、header 読み取り 10 秒、idle 120 秒、header 1 MiB を内部上限とし、認証前の FD / goroutine 枯渇を防ぐ
 - 起動時 token を含む URL fragment は mode `0700` の一時ディレクトリ内の mode `0600` bootstrap HTML にだけ保存する。`open`(darwin)/ `xdg-open`(linux)の argv には token を含まないファイルパスだけを渡す。通常起動の標準出力は token なし base URL とし、`--no-browser` または起動失敗時も bootstrap ファイルパスだけを表示する
-- SPA は fragment から token を取得後、即座に `history.replaceState` で URL から除去する。応答に `Referrer-Policy: no-referrer` と `Cache-Control: no-store` を付ける
+- SPA は fragment から token を取得後、即座に `history.replaceState` で URL から除去する。同一 tab の再読み込み回復に限り、検証済み token と active job ID を origin/tab 単位の `sessionStorage` に保存する。不正 fragment は除去して保存済みの有効 token へフォールバックする。再読み込み時は job の存在確認後に SSE snapshot へ再接続し、存在確認の一時エラーだけを上限付き backoff で再試行する。storage 上の無効値・通常 API の 401・header probe で確認した SSE の 401・存在しない job ID は該当 entry を削除し、storage 利用不能時は現在の page load だけで動作する。`localStorage` と Cookie には保存しない。応答に `Referrer-Policy: no-referrer` と `Cache-Control: no-store` を付ける
 - 開発・CI・検証用に `--port` / `--no-browser` を提供
 
 Acceptance criteria:
@@ -208,6 +208,7 @@ Acceptance criteria:
 - `--no-browser` 指定時にブラウザ起動処理が呼ばれないテストがある
 - 通常 API の query token が拒否され、SSE endpoint だけ query token を許可するテストがある
 - token が launcher argv、stdout、リクエストログ、Referer に残らないこと、および bootstrap の permission と終了時 cleanup をテストする
+- 同一 tab の再読み込みで token と active job ID を復元し、job snapshot/SSE に再接続できる。不正 fragment からの fallback、一時エラーの上限付き retry、通常 API および SSE probe の 401、storage 上の無効値・存在しない job ID の削除、`localStorage` / Cookie を使わないことをテストする
 
 #### M1-2: バイナリ探索
 
@@ -461,7 +462,7 @@ UI 変更時は加えて「スタブ環境での手動確認手順」を PR 説�
 ## 14. Security / privacy boundaries
 
 - bind は `127.0.0.1` のみ。`0.0.0.0` 禁止
-- 起動時 `crypto/rand` token を全 `/api/*` で検証。通常 API は header-only、SSE だけクエリ token(EventSource 制約)。起動 bootstrap は private な mode `0700` directory / mode `0600` HTML 経由で URL fragment を渡して即時除去し、token を launcher argv・stdout・ログ・Referer に出さない
+- 起動時 `crypto/rand` token を全 `/api/*` で検証。通常 API は header-only、SSE だけクエリ token(EventSource 制約)。起動 bootstrap は private な mode `0700` directory / mode `0600` HTML 経由で URL fragment を渡して即時除去し、token を launcher argv・stdout・ログ・Referer に出さない。同一 tab の reload 回復用 token / active job ID だけを `sessionStorage` に置き、`localStorage` / Cookie は使わない
 - Host ヘッダ検証(DNS rebinding 対策)、`/api/*` への Origin 検証(空 Origin は許可、非空 Origin は同一 localhost origin のみ許可)
 - active HTTP connection、header/body read deadline、idle deadline、header byte 数に有限上限を設ける
 - ダウンロード API は Job に記録済み filename の allowlist + `filepath.Clean` + final output directory 配下検証
@@ -508,7 +509,7 @@ UI 変更時は加えて「スタブ環境での手動確認手順」を PR 説�
 11. ジョブタイムアウトは v1 既定 12 時間の内部定数とする。GUI から変更可能にする場合は、ユーザー設定ファイルのスキーマ拡張を伴う別タスクとして扱う
 12. terminal job は最大 100 件かつ 24 時間、queued job は最大 4 件。subscriber overflow は切断 + Snapshot 再同期とする
 13. M1-4 は M0-3 未完了でもスタブベースで暫定実装できるが、実機確認反映前に最終完了としない
-14. token bootstrap は private bootstrap file + fragment + 即時 URL 除去とし、launcher argv / stdout には token を出さない。通常 API は header-only、SSE のみ query token。同一 OS ユーザー権限の悪意ある process は脅威モデル外とする
+14. token bootstrap は private bootstrap file + fragment + 即時 URL 除去とし、launcher argv / stdout には token を出さない。同一 tab の reload 回復に限って検証済み token と active job ID を `sessionStorage` に保存する。不正 fragment は保存済み有効 token へフォールバックし、401 は通常 API または SSE error 後の header probe で確認して session entry を削除する。`localStorage` / Cookie は使わない。通常 API は header-only、SSE のみ query token。同一 OS ユーザー権限の悪意ある process は脅威モデル外とする
 15. 初回 GitHub repository は AI orchestrator が private で作成してよい。public 化は別途人間承認を要する
 16. recoverable job work は `os.UserCacheDir()/whisper-cpp-gui/jobs` を既定とし、共有 temp の固定名先取りを防ぐ。一回限りの bootstrap だけ `os.MkdirTemp()` を使う
 17. active HTTP connection は v1 既定 128 の内部定数とし、上限超過 connection は handler 到達前に閉じる

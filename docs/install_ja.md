@@ -79,7 +79,7 @@ Terminal を開いたままにしてください。アプリは `127.0.0.1` の�
 
 ブラウザが開かない場合は、Terminal に表示された `Bootstrap file:` のファイルを Finder または `open` コマンドで開きます。`Open: http://127.0.0.1:...` の URL を直接開いても起動 token がないため操作できません。
 
-画面を再読み込みした、履歴から開き直した、または tab を閉じた後に認証エラーになった場合は、Terminal で `Ctrl-C` を押してアプリを終了し、`whisper-cpp-gui` をもう一度起動してください。起動時の新しい bootstrap から開き直します。
+同じ tab で画面を再読み込みした場合は、そのまま利用を継続できます。実行中または直前の job がある場合は状態を再取得し、進捗表示・キャンセル・出力取得へ復帰します。新しい tab、履歴からの開き直し、tab を閉じた後、またはアプリ自体を再起動した後に認証エラーになった場合は、Terminal でアプリを起動し直し、新しい bootstrap から開いてください。
 
 ## 4. モデルを取得する
 
@@ -207,7 +207,7 @@ brew reinstall whisper-cpp ffmpeg
 
 - server は `127.0.0.1` だけに bind し、Host と Origin を検証します。
 - 起動ごとに 256-bit token を生成します。通常 API は `X-Auth-Token` header だけを受け付けます。
-- token は権限 `0700` の一時ディレクトリ内にある権限 `0600` の bootstrap HTML で渡し、ブラウザが URL fragment から取得後すぐに削除します。launcher の引数、通常の標準出力、アプリログには token を出しません。
+- token は権限 `0700` の一時ディレクトリ内にある権限 `0600` の bootstrap HTML で渡し、ブラウザが URL fragment から取得後すぐに削除します。同じ tab の再読み込み回復に必要な token と active job ID だけを `sessionStorage` に保存し、`localStorage` や Cookie には保存しません。launcher の引数、通常の標準出力、アプリログには token を出しません。
 - ブラウザ標準の `EventSource` は任意 header を設定できないため、ジョブとモデルの SSE 接続だけは query parameter に token を含めます。この URL がブラウザの Network 表示や診断情報に現れる残余リスクを受容しています。loopback bind、Host/Origin 検証、`Referrer-Policy: no-referrer`、no-store 応答、query をログに出さないことで露出を抑えます。
 - 音声、動画、文字起こし結果、telemetry は外部送信しません。モデル取得は利用者の操作時だけ行い、固定 commit の HTTPS URL、サイズ、SHA256 を検証します。
 
