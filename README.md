@@ -59,6 +59,7 @@ replacement for that file because API access requires the startup token.
 Requirements:
 
 - Go 1.22 or newer
+- Node.js 18 or newer for browser behavior tests (no npm packages)
 - Bash and ShellCheck for shell-script validation
 - no real `whisper-cli`, `ffmpeg`, models, or macOS host for the automated test
   suite
@@ -72,6 +73,7 @@ gofmt_out="$(gofmt -l .)" && test -z "$gofmt_out"
 go build ./...
 go vet ./...
 go test ./...
+node testdata/browser/session_behavior_test.mjs
 shellcheck scripts/smoke_start.sh testdata/stubs/*
 ```
 

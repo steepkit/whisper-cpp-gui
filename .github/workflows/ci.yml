@@ -82,6 +82,9 @@ jobs:
       - name: Test
         run: go test -count=1 ./...
 
+      - name: Test browser session behavior
+        run: node testdata/browser/session_behavior_test.mjs
+
       - name: Check shell scripts
         run: shellcheck scripts/publish_clean_snapshot.sh scripts/smoke_start.sh testdata/stubs/ffmpeg testdata/stubs/smoke-exit testdata/stubs/smoke-hang testdata/stubs/whisper-cli
 

@@ -81,6 +81,7 @@
   const restoreAttemptLimit = 3;
   const restoreRetryBaseDelay = 250;
   const sileroVADModel = "silero-vad";
+  const jobStreamProbes = new WeakMap();
 
   const state = {
     activeJob: null,
@@ -198,6 +199,15 @@
     return response;
   }
 
+  function handleStreamAuthenticationFailure(error) {
+    closeEvents();
+    closeAllModelEvents();
+    state.activeJob = null;
+    renderJob();
+    setConnection(K.connectionError);
+    showRequestError(error);
+  }
+
   function probeStreamAuthentication() {
     if (state.authenticationProbe) {
       return state.authenticationProbe;
@@ -206,10 +216,7 @@
       .then((response) => response.text())
       .catch((error) => {
         if (error && error.code === "authentication") {
-          closeEvents();
-          closeAllModelEvents();
-          setConnection(K.connectionError);
-          showRequestError(error);
+          handleStreamAuthenticationFailure(error);
         }
       })
       .finally(() => {
@@ -218,6 +225,38 @@
         }
       });
     state.authenticationProbe = probe;
+    return probe;
+  }
+
+  function probeJobStream(id, source) {
+    const activeProbe = jobStreamProbes.get(source);
+    if (activeProbe) {
+      return activeProbe;
+    }
+    const probe = apiFetch(`/api/jobs/${encodeURIComponent(id)}/outputs`, { method: "GET" })
+      .then((response) => response.text())
+      .catch((error) => {
+        if (error && error.code === "authentication") {
+          handleStreamAuthenticationFailure(error);
+          return;
+        }
+        if (state.eventSource !== source || !state.activeJob || state.activeJob.id !== id) {
+          return;
+        }
+        if (error && error.status === 404) {
+          closeEvents();
+          clearStoredActiveJob();
+          state.activeJob = null;
+          renderJob();
+          setConnection(K.connectionReady);
+        }
+      })
+      .finally(() => {
+        if (jobStreamProbes.get(source) === probe) {
+          jobStreamProbes.delete(source);
+        }
+      });
+    jobStreamProbes.set(source, probe);
     return probe;
   }
 
@@ -1154,9 +1193,11 @@
       });
     });
     source.addEventListener("error", () => {
-      if (state.eventSource === source && state.activeJob && !isTerminal(state.activeJob.status)) {
-        setConnection(K.connectionReconnecting);
-        probeStreamAuthentication();
+      if (state.eventSource === source && state.activeJob && state.activeJob.id === id) {
+        if (!isTerminal(state.activeJob.status)) {
+          setConnection(K.connectionReconnecting);
+        }
+        probeJobStream(id, source);
       }
     });
   }

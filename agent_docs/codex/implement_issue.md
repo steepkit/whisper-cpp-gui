@@ -10,7 +10,7 @@
 ## 完了の定義(すべて満たすこと)
 
 1. Issue の受け入れ条件をすべて満たす
-2. `gofmt_out="$(gofmt -l .)" && test -z "$gofmt_out"`、`go build ./...` / `go vet ./...` / `go test ./...` が通る
+2. `gofmt_out="$(gofmt -l .)" && test -z "$gofmt_out"`、`go build ./...` / `go vet ./...` / `go test ./...` / `node testdata/browser/session_behavior_test.mjs` が通る
 3. 受け入れ条件に対応するテストを追加(`httptest` ハンドラテスト + スタブ E2E、テーブル駆動推奨)
 4. `go.mod` に依存を追加していない。禁止技術を使っていない
 5. UI 変更時は `web/locales/ja.json` にキー定義し、ハードコードしない
